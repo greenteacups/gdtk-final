@@ -5,6 +5,9 @@
 
 local output = {}
 
+local nkconfig = require 'nkconfig'
+nkPhases = nkconfig.NewtonKrylovPhases
+
 require 'sssoptions'
 
 function output.write_control_file(fileName)
@@ -32,86 +35,7 @@ function output.write_control_file(fileName)
    f:write(string.format('"write_flow_solution_at_step": %d,\n', config.write_flow_solution_at_step))
    f:write(string.format('"snapshot_count": %d,\n', config.snapshot_count))
    f:write(string.format('"number_total_snapshots": %d,\n', config.number_total_snapshots))
-   f:write(string.format('"halt_now": %d,\n', config.halt_now))
-   f:write('"steady_state_solver_options" : {\n')
-   f:write(string.format('   "use_preconditioner": %s,\n', tostring(SteadyStateSolver.use_preconditioner)))
-   f:write(string.format('   "frozen_preconditioner_count": %d,\n', SteadyStateSolver.frozen_preconditioner_count))
-   f:write(string.format('   "start_preconditioning": %d,\n', SteadyStateSolver.start_preconditioning))
-   f:write(string.format('   "ilu_fill": %d,\n', SteadyStateSolver.ilu_fill))
-   f:write(string.format('   "precondition_matrix_type": "%s",\n', SteadyStateSolver.precondition_matrix_type))
-   f:write(string.format('   "preconditioner_sigma": %s,\n', tostring(SteadyStateSolver.preconditioner_sigma)))
-   f:write(string.format('   "frozen_limiter_on_lhs": %s,\n', tostring(SteadyStateSolver.frozen_limiter_on_lhs)))
-   f:write(string.format('   "use_adaptive_preconditioner": %s,\n', tostring(SteadyStateSolver.use_adaptive_preconditioner)))
-   f:write(string.format('   "use_physicality_check": %s,\n', tostring(SteadyStateSolver.use_physicality_check)))
-   f:write(string.format('   "physicality_check_theta": %.18e,\n', SteadyStateSolver.physicality_check_theta))
-   f:write(string.format('   "use_line_search": %s,\n', tostring(SteadyStateSolver.use_line_search)))
-   f:write(string.format('   "inviscid_cfl": %s,\n', tostring(SteadyStateSolver.inviscid_cfl)))
-   f:write(string.format('   "use_scaling": %s,\n', tostring(SteadyStateSolver.use_scaling)))
-   f:write(string.format('   "use_complex_matvec_eval": %s,\n', tostring(SteadyStateSolver.use_complex_matvec_eval)))
-   f:write(string.format('   "number_pre_steps": %d,\n', SteadyStateSolver.number_pre_steps))
-   f:write(string.format('   "number_total_steps": %d,\n', SteadyStateSolver.number_total_steps))
-   f:write(string.format('   "max_number_attempts": %d,\n', SteadyStateSolver.max_number_attempts))
-   f:write(string.format('   "stop_on_relative_global_residual": %.18e,\n', SteadyStateSolver.stop_on_relative_global_residual))
-   f:write(string.format('   "stop_on_absolute_global_residual": %.18e,\n', SteadyStateSolver.stop_on_absolute_global_residual))
-   f:write(string.format('   "stop_on_mass_balance": %.18e,\n', SteadyStateSolver.stop_on_mass_balance))
-   f:write(string.format('   "max_sub_iterations": %d,\n', SteadyStateSolver.max_sub_iterations))
-   f:write(string.format('   "max_outer_iterations": %d,\n', SteadyStateSolver.max_outer_iterations))
-   f:write(string.format('   "max_restarts": %d,\n', SteadyStateSolver.max_restarts))
-   f:write(string.format('   "number_inner_iterations": %d,\n', SteadyStateSolver.number_inner_iterations))
-   f:write(string.format('   "number_start_up_steps": %d,\n', SteadyStateSolver.number_start_up_steps))
-   f:write(string.format('   "residual_based_cfl_scheduling": %s,\n', tostring(SteadyStateSolver.residual_based_cfl_scheduling)))
-   --
-   if type(SteadyStateSolver.cfl_schedule_value_list) == 'table' then
-      if SteadyStateSolver.cfl_schedule_length < #SteadyStateSolver.cfl_schedule_value_list then
-         SteadyStateSolver.cfl_schedule_length = #SteadyStateSolver.cfl_schedule_value_list
-      end
-   end
-   f:write(string.format('   "cfl_schedule_length": %d,\n',  SteadyStateSolver.cfl_schedule_length))
-   f:write('   "cfl_schedule_value_list": [')
-   if type(SteadyStateSolver.cfl_schedule_value_list) == 'table' then
-      for i,e in ipairs(SteadyStateSolver.cfl_schedule_value_list) do
-         f:write(string.format('%.18e', e))
-         if i < #SteadyStateSolver.cfl_schedule_value_list then f:write(', ') end
-      end
-   end
-   f:write('],\n')
-   f:write('   "cfl_schedule_iter_list": [')
-   if type(SteadyStateSolver.cfl_schedule_iter_list) == 'table' then
-      for i,e in ipairs(SteadyStateSolver.cfl_schedule_iter_list) do
-         f:write(string.format('%d', e))
-         if i < #SteadyStateSolver.cfl_schedule_iter_list then f:write(', ') end
-      end
-   end
-   f:write('],\n')
-   --
-   f:write(string.format('   "cfl_max": %.18e,\n', SteadyStateSolver.cfl_max))
-   f:write(string.format('   "cfl_min": %.18e,\n', SteadyStateSolver.cfl_min))
-   f:write(string.format('   "LHSeval0": %d,\n', SteadyStateSolver.LHSeval0))
-   f:write(string.format('   "RHSeval0": %d,\n', SteadyStateSolver.RHSeval0))
-   f:write(string.format('   "cfl0": %.18e,\n', SteadyStateSolver.cfl0))
-   f:write(string.format('   "eta0": %.18e,\n', SteadyStateSolver.eta0))
-   f:write(string.format('   "tau0": %.18e,\n', SteadyStateSolver.tau0))
-   f:write(string.format('   "sigma0": %.18e,\n', SteadyStateSolver.sigma0))
-   f:write(string.format('   "p0": %.18e,\n', SteadyStateSolver.p0))
-   f:write(string.format('   "LHSeval1": %d,\n', SteadyStateSolver.LHSeval1))
-   f:write(string.format('   "RHSeval1": %d,\n', SteadyStateSolver.RHSeval1))
-   f:write(string.format('   "cfl1": %.18e,\n', SteadyStateSolver.cfl1))
-   f:write(string.format('   "tau1": %.18e,\n', SteadyStateSolver.tau1))
-   f:write(string.format('   "sigma1": %.18e,\n', SteadyStateSolver.sigma1))
-   f:write(string.format('   "p1": %.18e,\n', SteadyStateSolver.p1))
-   f:write(string.format('   "eta_strategy": "%s",\n', SteadyStateSolver.eta_strategy))
-   f:write(string.format('   "eta1": %.18e,\n', SteadyStateSolver.eta1))
-   f:write(string.format('   "eta1_max": %.18e,\n', SteadyStateSolver.eta1_max))
-   f:write(string.format('   "eta1_min": %.18e,\n', SteadyStateSolver.eta1_min))
-   f:write(string.format('   "eta_ratio_per_step": %.18e,\n', SteadyStateSolver.eta_ratio_per_step))
-   f:write(string.format('   "gamma": %.18e,\n', SteadyStateSolver.gamma))
-   f:write(string.format('   "alpha": %.18e,\n', SteadyStateSolver.alpha))
-   f:write(string.format('   "limiter_freezing_residual_reduction": %.18e,\n', SteadyStateSolver.limiter_freezing_residual_reduction))
-   f:write(string.format('   "limiter_freezing_count": %d,\n', SteadyStateSolver.limiter_freezing_count))
-   f:write(string.format('   "snapshots_count": %d,\n', SteadyStateSolver.snapshots_count))
-   f:write(string.format('   "number_total_snapshots": %d,\n', SteadyStateSolver.number_total_snapshots))
-   f:write(string.format('   "write_diagnostics_count": %d,\n', SteadyStateSolver.write_diagnostics_count))
-   f:write(string.format('   "write_loads_count": %d\n', SteadyStateSolver.write_loads_count))
+   f:write(string.format('"halt_now": %d\n', config.halt_now))
    -- Note, also, no comma on last entry in JSON object. (^^^: Look up one line and check!)
    f:write('    }\n')
    -- Note, also, no comma on last entry in JSON object. (^^^: Look up one line and check!)

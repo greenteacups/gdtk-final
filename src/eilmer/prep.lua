@@ -11,9 +11,13 @@ require 'lua_helper'
 require 'blk_conn'
 require 'bc'
 
-
 local configoptions = require 'configoptions'
 config = configoptions.config
+
+local nkconfig = require 'nkconfig'
+NewtonKrylovGlobalConfig = nkconfig.NewtonKrylovGlobalConfig
+nkPhases = nkconfig.NewtonKrylovPhases
+NewtonKrylovPhase = nkconfig.NewtonKrylovPhase
 
 local gridpro = require 'gridpro'
 -- Make these functions global so that users may call them
@@ -72,8 +76,6 @@ write_block_list_file = output.write_block_list_file
 write_mpimap_file = output.write_mpimap_file
 write_fluidBlockArrays_file = output.write_fluidBlockArrays_file
 write_shock_fitting_helper_files = output.write_shock_fitting_helper_files
-
-require 'sssoptions'
 
 local prep_check = require 'prep_check'
 initTurbulence = prep_check.initTurbulence
@@ -137,6 +139,10 @@ function build_config_files(job)
    write_fluidBlockArrays_file("config/" .. job .. ".fluidBlockArrays")
    if config.grid_motion == "shock_fitting" then
       write_shock_fitting_helper_files(job)
+   end
+   if #nkPhases > 0 then
+      nkconfig.setIgnoreFlagInPhases(nkPhases)
+      nkconfig.writeNKConfigToFile(NewtonKrylovGlobalConfig, nkPhases, "config/" .. job .. ".nkconfig")
    end
    print("Done building config files.")
 end
