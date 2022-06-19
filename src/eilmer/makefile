@@ -185,6 +185,7 @@ LUA_MODULES := configoptions.lua \
 	zones.lua \
 	output.lua \
 	sssoptions.lua \
+	nkconfig.lua \
 	prep_check.lua
 
 FIELD_FILES := field/field.d \
