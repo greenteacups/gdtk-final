@@ -35,11 +35,11 @@ NewtonKrylovGlobalConfigHidden = {
 
    -- linear solver and preconditioner
    max_linear_solver_iterations = 10,
-   max_linear_solver_restarts = 5,
+   max_linear_solver_restarts = 0,
    use_scaling = true,
-   frechet_derivative_perturbation_size = 1.0e-30,
+   frechet_derivative_perturbation = 1.0e-30,
    use_preconditioner = true,
-   preconditioner_perturbation_size = 1.0e-30,
+   preconditioner_perturbation = 1.0e-30,
    preconditioner = "ilu",
    --
    -- ILU preconditioner settings
@@ -82,7 +82,7 @@ NewtonKrylovPhaseDefaults = {
    frozen_preconditioner = true,
    steps_between_preconditioner_update = 10,
    use_adaptive_preconditioner = false,
-   ignore_stopping_criterion = true,
+   ignore_stopping_criteria = true,
    frozen_limiter_for_jacobian = true,
 
    -- Linear solver control
@@ -92,7 +92,7 @@ NewtonKrylovPhaseDefaults = {
    use_auto_cfl = false,
    threshold_residual_drop_for_cfl_growth = 0.99,
    start_cfl = 1.0,
-   cfl_max = 1000.0,
+   max_cfl = 1000.0,
    auto_cfl_exponent = 0.75,
 
 }
@@ -144,14 +144,14 @@ function NewtonKrylovPhase:tojson()
    str = str .. string.format('    "frozen_preconditioner": %s,\n', tostring(self.frozen_preconditioner))
    str = str .. string.format('    "steps_between_preconditioner_update": %d,\n', self.steps_between_preconditioner_update)
    str = str .. string.format('    "use_adaptive_preconditioner": %s,\n', tostring(self.use_adaptive_preconditioner))
-   str = str .. string.format('    "ignore_stopping_criterion": %s,\n', tostring(self.ignore_stopping_criterion))
+   str = str .. string.format('    "ignore_stopping_criteria": %s,\n', tostring(self.ignore_stopping_criteria))
    str = str .. string.format('    "frozen_limiter_for_jacobian": %s,\n', tostring(self.frozen_limiter_for_jacobian))
    str = str .. string.format('    "linear_solve_tolerance": %.18e,\n', self.linear_solve_tolerance)
    str = str .. string.format('    "use_auto_cfl": %s,\n', tostring(self.use_auto_cfl))
    if self.use_auto_cfl then
       str = str .. string.format('    "threshold_residual_drop_for_cfl_growth": %.18e,\n', self.threshold_residual_drop_for_cfl_growth)
       str = str .. string.format('    "start_cfl": %.18e,\n', self.start_cfl)
-      str = str .. string.format('    "cfl_max": %.18e,\n', self.cfl_max)
+      str = str .. string.format('    "max_cfl": %.18e,\n', self.max_cfl)
       str = str .. string.format('    "auto_cfl_exponent": %.18e,\n', self.auto_cfl_exponent)
    end
    str = str .. '    "dummy_entry_without_trailing_comma": 0\n' -- no comma on last entry
@@ -161,9 +161,9 @@ end
 
 local function setIgnoreFlagInPhases(nkPhases)
    for i=1,#nkPhases-1 do
-      nkPhases[i].ignore_stopping_criterion = true
+      nkPhases[i].ignore_stopping_criteria = true
    end
-   nkPhases[#nkPhases].ignore_stopping_criterion = false
+   nkPhases[#nkPhases].ignore_stopping_criteria = false
 end
 
 local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
@@ -204,9 +204,9 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
    f:write(string.format('"max_linear_solver_iterations": %d,\n', nkConfig.max_linear_solver_iterations))
    f:write(string.format('"max_linear_solver_restarts": %d,\n', nkConfig.max_linear_solver_restarts))
    f:write(string.format('"use_scaling": %s,\n', tostring(nkConfig.use_scaling)))
-   f:write(string.format('"frechet_derivative_perturbation_size": %.18e,\n', nkConfig.frechet_derivative_perturbation_size))
+   f:write(string.format('"frechet_derivative_perturbation": %.18e,\n', nkConfig.frechet_derivative_perturbation))
    f:write(string.format('"use_preconditioner": %s,\n', tostring(nkConfig.use_preconditioner)))
-   f:write(string.format('"preconditioner_perturbation_size": %.18e,\n', nkConfig.preconditioner_perturbation_size))
+   f:write(string.format('"preconditioner_perturbation": %.18e,\n', nkConfig.preconditioner_perturbation))
    f:write(string.format('"preconditioner": "%s",\n', nkConfig.preconditioner))
    f:write(string.format('"ilu_fill": %d,\n', nkConfig.ilu_fill))
    f:write(string.format('"sgs_relaxation_iterations": %d,\n', nkConfig.sgs_relaxation_iterations))
