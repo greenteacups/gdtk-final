@@ -611,38 +611,6 @@ PreconditionMatrixType preconditionMatrixTypeFromName(string name)
     }
 } // end preconditionMatrixTypeFromName()
 
-enum EtaStrategy { constant, geometric, adaptive, adaptive_capped }
-string etaStrategyName(EtaStrategy i)
-{
-    final switch (i) {
-    case EtaStrategy.constant: return "constant";
-    case EtaStrategy.geometric: return "geometric";
-    case EtaStrategy.adaptive: return "adaptive";
-    case EtaStrategy.adaptive_capped: return "adaptive_capped";
-    }
-} // end etaStrategyName()
-
-EtaStrategy etaStrategyFromName(string name)
-{
-    switch (name) {
-    case "constant": return EtaStrategy.constant;
-    case "geometric": return EtaStrategy.geometric;
-    case "adaptive": return EtaStrategy.adaptive;
-    case "adaptive_capped": return EtaStrategy.adaptive_capped;
-    default:
-        string errMsg = "The selected 'eta_strategy' is unavailable.\n";
-        errMsg ~= format("You selected: '%s'\n", name);
-        errMsg ~= "The available strategies are: \n";
-        errMsg ~= "   'constant'\n";
-        errMsg ~= "   'geometric'\n";
-        errMsg ~= "   'adaptive'\n";
-        errMsg ~= "   'adaptive_capped'\n";
-        errMsg ~= "Check your selection or its spelling in the input file.\n";
-        throw new Error(errMsg);
-    }
-} // end etaStrategyFromName()
-
-
 // ---------------------
 // PART 2. Special zones
 // ---------------------
@@ -726,72 +694,6 @@ struct ShapeSensitivityCalculatorOptions {
     int maxStepsBezierCurveFit = 10000;
     string userDefinedObjectiveFile = "";
 }
-
-struct SteadyStateSolverOptions {
-    int nConserved = 4;
-    bool usePreconditioner = true;
-    int frozenPreconditionerCount = 1;
-    int startPreconditioning = 1;
-    int iluFill = 0;
-    PreconditionMatrixType preconditionMatrixType = PreconditionMatrixType.jacobi;
-    double preconditionerSigma = 1.0e-30;
-    bool frozenLimiterOnLHS = false;
-    bool useAdaptivePreconditioner = false;
-    bool usePhysicalityCheck = false;
-    double physicalityCheckTheta = 0.2;
-    bool useLineSearch = false;
-    bool inviscidCFL = false;
-    bool useScaling = true;
-    bool useComplexMatVecEval = false;
-    int nPreSteps = 10;
-    int nTotalSteps = 100;
-    int maxNumberAttempts = 3; // at taking a Newton step.
-    double stopOnRelGlobalResid = 1.0e-99;
-    double stopOnAbsGlobalResid = 1.0e-99;
-    double stopOnMassBalance = -1.0;
-    // Restarted preconditioned FGMRES settings
-    int maxSubIterations = 1;
-    int maxOuterIterations = 10;
-    int maxRestarts = 10;
-    int nInnerIterations = 5;
-    double cfl_max = 1e8;
-    double cfl_min = 1e-02;
-    bool residual_based_cfl_scheduling = true;
-    int cfl_schedule_length = 0;
-    double[] cfl_schedule_value_list;
-    int[] cfl_schedule_iter_list;
-    // Options for start-up phase
-    int nStartUpSteps = 5;
-    int LHSeval0 = 1;
-    int RHSeval0 = 1;
-    double p0 = 0.75;
-    double cfl0 = 1.0;
-    double eta0 = 0.5;
-    double tau0 = 0.1;
-    double sigma0 = 1.0e-8;
-    // Options for inexact Newton phase
-    int LHSeval1 = 2;
-    int RHSeval1 = 2;
-    double p1 = 1.0;
-    double cfl1 = 10.0;
-    double tau1 = 0.1;
-    double sigma1 = 1.0e-8;
-    EtaStrategy etaStrategy = EtaStrategy.constant;
-    double eta1 = 0.5;
-    double eta1_max = 0.9;
-    double eta1_min = 0.01;
-    double etaRatioPerStep = 0.9;
-    double gamma = 0.9;
-    double alpha = 2.0;
-    double limiterFreezingResidReduction = 1e-99;
-    int limiterFreezingCount = 50;
-    // Options related to writing out snapshots and diagnostics
-    int snapshotsCount = 10;
-    int nTotalSnapshots = 5;
-    int writeDiagnosticsCount = 20;
-    int writeLoadsCount = 20;
-} // end struct SteadyStateSolverOptions
-
 
 final class GlobalConfig {
     shared static bool in_mpi_context = false; // Usual context is thread-parallel only.
