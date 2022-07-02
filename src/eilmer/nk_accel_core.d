@@ -21,17 +21,23 @@ import std.json : JSONValue;
 import std.math;
 import std.string;
 import std.conv : to;
-import std.typcons : Tuple;
+import std.typecons : Tuple, tuple;
 
 import nm.complex;
 import nm.number : number;
 import nm.smla;
 import nm.bbla;
-import json_helper : getJSONdouble, getJSONint;
+import json_helper;
+import geom;
+
 import conservedquantities : ConservedQuantities;
 
 import globalconfig;
 import globaldata;
+import simcore_exchange;
+import simcore_gasdynamic_step : detect_shocks;
+import sfluidblock : SFluidBlock;
+import user_defined_source_terms : getUDFSourceTermsForCell;
 
 version(mpi_parallel) {
     import mpi;
@@ -124,7 +130,7 @@ struct NKGlobalConfig {
     double frechetDerivativePerturbation = 1.0e-30;
     bool usePreconditioner = true;
     double preconditionerPerturbation = 1.0e-30;
-    PreconditionerType preconditioner = Preconditioner.ilu;
+    PreconditionerType preconditioner = PreconditionerType.ilu;
     // ILU setting
     int iluFill = 0;
     // SGS setting
@@ -148,7 +154,7 @@ struct NKGlobalConfig {
         auto jsonArray = jsonData["cfl_schedule"].array;
         foreach (entry; jsonArray) {
             auto values = entry.array;
-            cflSchedule ~= tuple!("step", "cfl")(values[0], values[1]);
+            cflSchedule ~= tuple!("step", "cfl")(values[0].get!int, values[1].get!double);
         }
         numberOfPhases = getJSONint(jsonData, "number_of_phases", numberOfPhases);
         phaseChangesAtSteps = getJSONintarray(jsonData, "phase_changes_at_steps", phaseChangesAtSteps);
@@ -173,13 +179,14 @@ struct NKGlobalConfig {
         stepsBetweenLoadsUpdate = getJSONint(jsonData, "steps_between_loads_update", stepsBetweenLoadsUpdate);
     }
 }
+NKGlobalConfig nkCfg;
 
 struct NKPhaseConfig {
     int residualInterpolationOrder = 2;
     int jacobianInterpolationOrder = 2;
     bool frozenPreconditioner = true;
     int stepsBetweenPreconditionerUpdate = 10;
-    bool useAdaptivePrecontitioner = false;
+    bool useAdaptivePreconditioner = false;
     bool ignoreStoppingCriteria = true;
     bool frozenLimiterForJacobian = true;
     double linearSolveTolerance = 0.01;
@@ -201,7 +208,7 @@ struct NKPhaseConfig {
         frozenLimiterForJacobian = getJSONbool(jsonData, "frozen_limiter_for_jacobian", frozenLimiterForJacobian);
         linearSolveTolerance = getJSONdouble(jsonData, "linear_solver_tolerance", linearSolveTolerance);
         useAutoCFL = getJSONbool(jsonData, "use_auto_cfl", useAutoCFL);
-        thresholdResidualDropForCFLGrowth = getJSONdouble(jsnoData, "threshold_residual_drop_for_cfl_growth", thresholdResidualDropForCFLGrowth);
+        thresholdResidualDropForCFLGrowth = getJSONdouble(jsonData, "threshold_residual_drop_for_cfl_growth", thresholdResidualDropForCFLGrowth);
         startCFL = getJSONdouble(jsonData, "start_cfl", startCFL);
         maxCFL = getJSONdouble(jsonData, "max_cfl", maxCFL);
         autoCFLExponent = getJSONdouble(jsonData, "auto_cfl_exponent", autoCFLExponent);
@@ -224,21 +231,8 @@ NKPhaseConfig activePhase;
  * Authors: RJG and KAD
  * Date: 2022-03-08
  */
-class CFLSelector {
-    @nogc @property double startCFL() const { return mStartCFL; }
-    CFLSelector dup() const;
-    this(double startCFL)
-    {
-        mStartCFL = startCFL;
-    }
-    this(JSONValue jsonData)
-    {
-        getJSONdouble(jsonData, "start_cfl", mStartCFL);
-    }
+interface CFLSelector {
     @nogc double nextCFL(double cfl, int step, double currResidual, double prevResidual);
-
-private:
-    double mStartCFL;
 }
 
 /**
@@ -270,23 +264,10 @@ private:
 class LinearRampCFL : CFLSelector {
     this(int startStep, int endStep, double startCFL, double endCFL)
     {
-        super(startCFL);
         mStartStep = startStep;
         mEndStep = endStep;
+        mStartCFL = startCFL;
         mEndCFL = endCFL;
-    }
-
-    this(JSONValue jsonData)
-    {
-        super(jsonData);
-        getJSONint(jsonData, "start_step", mStartStep);
-        getJSONint(jsonData, "end_step", mEndStep);
-        getJSONdouble(jsonData, "end_cfl", mEndCFL);
-    }
-    
-    override LinearRampCFL dup() const
-    {
-        return new LinearRampCFL(mStartStep, mEndStep, mStartCFL, mEndCFL);
     }
 
     @nogc
@@ -301,6 +282,7 @@ class LinearRampCFL : CFLSelector {
 private:
     int mStartStep;
     int mEndStep;
+    double mStartCFL;
     double mEndCFL;
 }
 
@@ -312,32 +294,15 @@ private:
  */
 
 class ResidualBasedAutoCFL : CFLSelector {
-    this(double startCFL, double p, double cfl_max)
+    this(double p, double cfl_max)
     {
-        super(startCFL);
         mP = p;
         mMaxCFL = cfl_max;
-    }
-
-    this(JSONValue jsonData)
-    {
-        super(jsonData);
-        getJSONdouble(jsonData, "cfl_adjustment_power", mP);
-        getJSONdouble(jsonData, "cfl_max", mMaxCFL);
-    }
-    
-    override ResidualBasedAutoCFL dup() const
-    {
-        return new ResidualBasedAutoCFL(mStartCFL, mP, mMaxCFL);
     }
 
     @nogc
     override double nextCFL(double cfl, int step, double currResidual, double prevResidual)
     {
-        if (step == 0) {
-            // We won't have any previous residual.
-            return mStartCFL;
-        }
         auto residRatio = prevResidual/currResidual;
         double cflTrial = cfl*pow(residRatio, mP);
         // Apply some safeguads on the value.
@@ -402,42 +367,6 @@ struct RestartInfo {
 }
 RestartInfo[] snapshots;
 
-
-struct NKPhaseConfig {
-    int jacobianInterpolationOrder;
-    int residualInterpolationOrder;
-    double perturbationSize; /// was: sigma
-    double relTolForNewtonUpdate; /// was: eta
-    CFLSelector cflSelector;
-
-    this(this)
-    {
-        cflSelector = cflSelector.dup();
-    }
-
-    void readValuesFromJSON(JSONValue jsonData)
-    {
-        getJSONint(jsonData, "jacobian_interpolation_order", jacobianInterpolationOrder);
-        getJSONint(jsonData, "residual_interpolation_order", residualInterpolationOrder);
-        getJSONdouble(jsonData, "perturbation_size", perturbationSize);
-        getJSONdouble(jsonData, "rel_tol_for_newton_update", relTolForNewtonUpdate);
-        auto cflSchedule = jsonData["cfl_schedule"].str;
-        switch (cflSchedule) {
-        case "auto":
-            cflSelector = new ResidualBasedAutoCFL(jsonData);
-            break;
-        case "linear":
-            cflSelector = new LinearRampCFL(jsonData);
-            break;
-        default:
-            throw new NewtonKrylovException("Invalid cfl_schedule type.");
-        }
-    }
-}
-NKPhaseConfig[] nkPhases;
-NKPhaseConfig activePhase;
-
-
 struct LinearSystemInput {
     int step;
     double dt;
@@ -462,9 +391,12 @@ GMRESInfo gmresInfo;
 void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMPITask)
 {
     alias cfg = GlobalConfig;
-    alias nkCfg = GlobalConfig.sssOptions;
-
     string jobName = cfg.base_file_name;
+
+    if (cfg.verbosity_level > 1) writeln("Read N-K config file.");
+    JSONValue jsonData = readJSONfile("config/"~cfg.base_file_name~".nkconfig");
+    nkCfg.readValuesFromJSON(jsonData);
+    
     double referenceGlobalResidual, globalResidual, prevGlobalResidual;
     bool residualsUpToDate = false;
     int nWrittenSnapshots;
@@ -472,6 +404,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
     bool finalStep = false;
     double cfl;
     double dt;
+    CFLSelector cflSelector;
     
     /*----------------------------------------------
      * Initialisation
@@ -494,7 +427,23 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
         sblk.allocate_GMRES_workspace();
     }
     */
-    
+
+    // Look for global CFL schedule and use to set CFL
+    if (nkCfg.cflSchedule.length > 0) {
+        foreach (i, startRamp; nkCfg.cflSchedule[0 .. $-1]) {
+            if (startStep >= startRamp.step) {
+                auto endRamp = nkCfg.cflSchedule[i+1];
+                cflSelector = new LinearRampCFL(startRamp.step, endRamp.step, startRamp.cfl, endRamp.cfl);
+                break;
+            }
+        }
+        // Or check we aren't at end of cfl schedule
+        auto lastEntry = nkCfg.cflSchedule[$-1];
+        if (startStep >= lastEntry.step) {
+            // Set a flat CFL beyond limit of scheule.
+            cflSelector = new LinearRampCFL(lastEntry.step, nkCfg.maxNewtonSteps, lastEntry.cfl, lastEntry.cfl);
+        }
+    }
     
     if (snapshotStart > 0) {
         /*----------------------------------------------
@@ -510,27 +459,44 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
         nWrittenSnapshots = determineNumberOfSnapshots();
         RestartInfo restart = snapshots[snapshotStart];
         startStep = restart.step + 1;
-        cfl = restart.cfl;
         globalResidual = restart.globalResidual;
         prevGlobalResidual = globalResidual;
         // Determine phase
-        foreach (phase, phaseStep; nkCfg.stepNumbersForPhaseChanges) {
+        foreach (phase, phaseStep; nkCfg.phaseChangesAtSteps) {
             if (startStep < phaseStep) {
-                setPhaseSettings(phase);
+                setPhaseSettings(phase); 
                 break;
             }
+        }
+        // end condition when step is past final phase
+        if (startStep >= nkCfg.phaseChangesAtSteps[$-1]) {
+            auto finalPhase = nkCfg.phaseChangesAtSteps.length;
+            setPhaseSettings(finalPhase);
+        }
+        if (activePhase.useAutoCFL) {
+            cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL);
+            cfl = restart.cfl;
+        }
+        else { // Assume we have a global (phase-independent) schedule
+            cfl = cflSelector.nextCFL(-1.0, startStep, -1.0, -1.0);
         }
     }
     else {
         // On fresh start, the phase setting must be at 0
         setPhaseSettings(0);
-        cfl = activePhase.cflSelector.startCFL();
+        if (activePhase.useAutoCFL) {
+            cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL);
+            cfl = activePhase.startCFL;
+        }
+        else { // Assume we have a global (phase-independent) schedule
+            cfl = cflSelector.nextCFL(-1.0, startStep, -1.0, -1.0);
+        }
     }
 
     // Start timer right at beginning of stepping.
     auto wallClockStart = Clock.currTime();
     double wallClockElapsed;
-    foreach (step; startStep .. nkCfg.maxSteps) {
+    foreach (step; startStep .. nkCfg.maxNewtonSteps) {
         /*---
          * 0. Check for any special actions based on step to perform at START of step
          *---
@@ -541,19 +507,21 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
          */
         residualsUpToDate = false;
         // 0a. change of phase 
-        size_t currentPhase = countUntil(nkCfg.stepNumbersForPhaseChanges, step);
+        size_t currentPhase = countUntil(nkCfg.phaseChangesAtSteps, step);
         if (currentPhase != -1) { // start of new phase detected
             setPhaseSettings(currentPhase);
-            // When we change phase, we reset CFL to user's selection.
-            cfl = activePhase.cflSelector.startCFL();
+            if (activePhase.useAutoCFL) {
+                // When we change phase, we reset CFL to user's selection if using auto CFL.
+                cfl = activePhase.startCFL;
+            }
         }
 
         // 0b. Check if setting reference residuals.
-        if (step == nkCfg.stepNumberForReferenceResiduals) {
+        if (step == nkCfg.setReferenceResidualsAtStep) {
             if (step == 0 && GlobalConfig.is_master_task) {
                 string errMsg = "Reference residuals cannot be set at START of step 0\n"~
                     "since they have not been computed yet.\n"~
-                    "Instead, select 'step_number_for_reference_residuals = 1'";
+                    "Instead, select 'set_reference_residuals_at_step = 1' in your Lua configuration.";
                 throw new Error(errMsg);
             }
             referenceGlobalResidual = globalResidual;
@@ -564,12 +532,18 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
         }
 
         // 0c. Check if we need to freeze limiter
-        if (step == nkCfg.stepNumberForLimiterFreeze) {
+        if (step == nkCfg.freezeLimiterAtStep) {
             // We need to compute the limiter a final time before freezing it.
             // This is achieved via evalRHS
             if (GlobalConfig.frozen_limiter == false) {
                 evalResidual(0);
             }
+            GlobalConfig.frozen_limiter = true;
+        }
+
+        if (step < nkCfg.freezeLimiterAtStep) {
+            // Make sure that limiter is on in case it has been set
+            // to frozen during a Jacobian evaluation.
             GlobalConfig.frozen_limiter = true;
         }
 
@@ -585,9 +559,11 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
          * 1. Perforn Newton update
          *---
          */
-        globalResidual = solveNewtonStep();
-        double omega = nkCfg.useRelaxationFactor ? determineRelaxationFactor() : 1.0;
-        if (omega >= nkCfg.minimumAllowableRelaxationFactor) {
+        globalResidual = solveNewtonStep(dt);
+        // FIX ME -- 2022-07-02
+        //        double omega = nkCfg.usePhysicalityCheck ? determineRelaxationFactor() : 1.0;
+        double omega = 1.0;
+        if (omega >= nkCfg.physicalityCheckAllowableChange) {
             // Things are good. Apply omega-scaled update and continue on.
             // We think??? If not, we bail at this point.
             try {
@@ -596,19 +572,26 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
             catch (NewtonKrylovException e) {
                 // We need to bail out at this point.
                 // User can probably restart with less aggressive CFL schedule.
-                writeln("Update failure in Newton step.");
-                writefln("step= %d, CFL= %e, dt= %e, global-residual= %e ", step, cfl, dt, globalResidual);
-                writeln("Error message from failed update:");
-                writefln("%s", e.msg);
-                exit(1);
+                if (GlobalConfig.is_master_task) {
+                    writeln("Update failure in Newton step.");
+                    writefln("step= %d, CFL= %e, dt= %e, global-residual= %e ", step, cfl, dt, globalResidual);
+                    writeln("Error message from failed update:");
+                    writefln("%s", e.msg);
+                    writeln("You might be able to try a smaller CFL.");
+                    writeln("Bailing out!");
+                    exit(1);
+                }
             }
-            cfl = activePhase.cflSelector.nextCFL(cfl, step, globalResidual, prevGlobalResidual);
+            cfl = cflSelector.nextCFL(cfl, step, globalResidual, prevGlobalResidual);
         }
         else {
             if (GlobalConfig.is_master_task) {
                 writeln("WARNING: relaxation factor for Newton update is very small.");
                 writefln("step= %d, relaxation factor= %f");
+                writeln("Bailing out!");
+                exit(1);
             }
+            /*
             cfl = nkCfg.cflReductionFactorOnFail * cfl;
             // Return flow states to their original state for next attempt.
             foreach (blk; parallel(localFluidBlocks,1)) {
@@ -616,7 +599,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
                     cell.decode_conserved(0, 0, 0.0);
                 }
             }
-            // [TODO] Dangerous exceptions are fatal??? Nick likes this, but is here the proper context?
+            */
             // [THINK] What do we have to halt repeated reductions in CFL?
         }
         
@@ -628,42 +611,28 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
         // We can now set previous residual in preparation for next step.
         prevGlobalResidual = globalResidual;
         
-        // Check if we meet the residual reduction for limiter freezing
-        if ((globalResidual/referenceGlobalResidual) <= nkCfg.residualReductionForLimiterFreeze) {
-            // We need to compute the limiter a final time before freezing it.
-            // This is achieved via evalResidual
-            if (GlobalConfig.frozen_limiter == false) {
-                evalResidual(0);
-            }
-            GlobalConfig.frozen_limiter = true;
-            if (GlobalConfig.is_master_task) {
-                writeln("******************************************************************");
-                writefln("Residual reduction target met for limiter freezing at step: %d", step);
-                writeln("******************************************************************");
-            }
-        }
         /*---
          * 2a. Stopping checks.
          *---
          */
-        if (step == nkCfg.maxSteps) {
+        if (step == nkCfg.maxNewtonSteps) {
             finalStep = true;
             if (GlobalConfig.is_master_task) {
                 writeln("STOPPING: Reached maximum number of steps.");
             }
         }
-        if (globalResidual <= nkCfg.absoluteGlobalResidualReduction) {
+        if (globalResidual <= nkCfg.stopOnAbsoluteResidual) {
             finalStep = true;
             if (GlobalConfig.is_master_task) {
                 writeln("STOPPING: The absolute global residual is below target value.");
-                writefln("         current global residual= %.6e  target value= %.6e", globalResidual, nkCfg.absoluteGlobalResidualReduction);
+                writefln("         current global residual= %.6e  target value= %.6e", globalResidual, nkCfg.stopOnAbsoluteResidual);
             }
         }
-        if ((globalResidual/referenceGlobalResidual) <= nkCfg.relativeGlobalResidualReduction) {
+        if ((globalResidual/referenceGlobalResidual) <= nkCfg.stopOnRelativeResidual) {
             finalStep = true;
             if (GlobalConfig.is_master_task) {
                 writeln("STOPPING: The relative global residual is below target value.");
-                writefln("         current residual= %.6e  target value= %.6e", (globalResidual/referenceGlobalResidual), nkCfg.relativeGlobalResidualReduction);
+                writefln("         current residual= %.6e  target value= %.6e", (globalResidual/referenceGlobalResidual), nkCfg.stopOnRelativeResidual);
             }
         }
         // [TODO] Add in a halt_now condition.
@@ -671,8 +640,8 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
          * 2b. Reporting (to files and screen)
          *---
          */
-        if (((step % nkCfg.writeDiagnosticsCount) == 0) || finalStep) {
-            writeDiagnostics(step, dt, cfl, residualsUpToDate);
+        if (((step % nkCfg.stepsBetweenDiagnostics) == 0) || finalStep) {
+            //writeDiagnostics(step, dt, cfl, residualsUpToDate);
         }
 
         // [TODO] Write loads. We only need one lot of loads.
@@ -682,7 +651,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
         // Reporting to screen on progress.
         if ( ((step % GlobalConfig.print_count) == 0) || finalStep ) {
             wallClockElapsed = 1.0e-3*(Clock.currTime() - wallClockStart).total!"msecs"();
-            printStatusToScreen(step, cfl, dt, wallClockElapsed, residualsUpToDate);
+            //printStatusToScreen(step, cfl, dt, wallClockElapsed, residualsUpToDate);
         }
         
     }
@@ -720,26 +689,25 @@ void setAndReportThreads(int maxCPUs, int threadsPerMPITask)
 
 void initPreconditioner()
 {
-    alias nkCfg = GlobalConfig.sssOptions;
     if (nkCfg.usePreconditioner) {
         evalResidual(0);
         // initialize the flow Jacobians used as local precondition matrices for GMRES
-        final switch (nkCfg.preconditionMatrixType) {
-            case PreconditionMatrixType.jacobi:
-                foreach (blk; localFluidBlocks) { blk.initialize_jacobian(-1, GlobalConfig.sssOptions.preconditionerSigma); }
-                break;
-            case PreconditionMatrixType.ilu:
-                foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, GlobalConfig.sssOptions.preconditionerSigma); }
-                break;
-            case PreconditionMatrixType.sgs:
-                foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, GlobalConfig.sssOptions.preconditionerSigma); }
-                break;
-            case PreconditionMatrixType.sgs_relax:
-                foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, GlobalConfig.sssOptions.preconditionerSigma); }
-                break;
-            case PreconditionMatrixType.lu_sgs:
-                // do nothing
-                break;
+        final switch (nkCfg.preconditioner) {
+        case PreconditionerType.jacobi:
+            foreach (blk; localFluidBlocks) { blk.initialize_jacobian(-1, nkCfg.preconditionerPerturbation); }
+            break;
+        case PreconditionerType.ilu:
+            foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, nkCfg.preconditionerPerturbation); }
+            break;
+        case PreconditionerType.sgs:
+            foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, nkCfg.preconditionerPerturbation); }
+            break;
+        case PreconditionerType.lusgs:
+            // do nothing
+            break;
+        case PreconditionerType.diagonal:
+            // do nothing
+            break; 
         } // end switch
     }
 }
@@ -875,7 +843,7 @@ void initialiseDiagnosticsFile(string diagFname)
 
 void allocateGlobalGMRESWorkspace()
 {
-    size_t m = to!size_t(GlobalConfig.sssOptions.maxLinearSolveIterations);
+    size_t m = to!size_t(nkCfg.maxLinearSolverIterations);
     g0.length = m+1;
     g1.length = m+1;
     h.length = m+1;
@@ -894,7 +862,6 @@ void allocateGlobalGMRESWorkspace()
 
 void setPhaseSettings(size_t phase)
 {
-    alias nkCfg = GlobalConfig.sssOptions;
     activePhase = nkPhases[phase];
     foreach (blk; parallel(localFluidBlocks,1)) blk.set_interpolation_order(activePhase.residualInterpolationOrder);
 }
@@ -939,13 +906,13 @@ double determineMinDt(double cfl)
 {
     double signal;
     double dt;
-    bool useInviscidCFL = GlobalConfig.sssOptions.useInviscidCFL;
+    bool inviscidCFLOnly = nkCfg.inviscidCFLOnly;
     bool firstCell;
     foreach (blk; parallel(localFluidBlocks,1)) {
         firstCell = true;
         foreach (cell; blk.cells) {
             signal = cell.signal_frequency();
-            if (useInviscidCFL) signal = cell.signal_hyp.re;
+            if (inviscidCFLOnly) signal = cell.signal_hyp.re;
             cell.dt_local = cfl / signal;
             if (firstCell) {
                 blk.dtMin = cell.dt_local;
@@ -978,11 +945,11 @@ double determineMinDt(double cfl)
 void setDtLocalInCells(double cfl)
 {
     double signal;
-    bool useInviscidCFL = GlobalConfig.sssOptions.useInviscidCFL;
+    bool inviscidCFLOnly = nkCfg.inviscidCFLOnly;
     foreach (blk; parallel(localFluidBlocks,1)) {
         foreach (cell; blk.cells) {
             signal = cell.signal_frequency();
-            if (useInviscidCFL) signal = cell.signal_hyp.re;
+            if (inviscidCFLOnly) signal = cell.signal_hyp.re;
             cell.dt_local = cfl / signal;
         }
     }
@@ -1058,10 +1025,9 @@ foreach (blk; localFluidBlocks) `~norm2~` += blk.normAcc;
  * History:
  *    2022-03-02  Major clean-up as part of refactoring work.
  */
-double solveNewtonStep()
+double solveNewtonStep(double dt)
 {
     alias cfg = GlobalConfig;
-    alias nkCfg = GlobalConfig.sssOptions;
 
     bool isConverged = false;
     /*---
@@ -1081,7 +1047,7 @@ double solveNewtonStep()
                          // compared to this.
     // v = r0/beta
     prepareKrylovSpace(beta);
-    auto targetResidual = activePhase.relTolForNewtonUpdate * beta;
+    auto targetResidual = activePhase.linearSolveTolerance * beta;
     if (lsi.computePreconditioner) {
         computePreconditioner();
     }
@@ -1091,10 +1057,10 @@ double solveNewtonStep()
      *---
      */
     size_t r_break;
-    int maxIterations = nkCfg.maxLinearSolveIterations;
+    int maxIterations = nkCfg.maxLinearSolverIterations;
     // We add one here because input is to do with number of *restarts*.
     // We need at least one attempt (+1) plus the number of restarts chosen.
-    int nAttempts = nkCfg.maxRestarts + 1;
+    int nAttempts = nkCfg.maxLinearSolverRestarts + 1;
     int iterationCount;
     foreach (r; 0 .. nAttempts) {
         // Initialise some working arrays and matrices for this step.
@@ -1106,7 +1072,8 @@ double solveNewtonStep()
         g0[0] = beta;
 
         // Delegate inner iterations
-        isConverged = performIterations(maxIterations, scale, iterationCount);
+        isConverged = performIterations(maxIterations, dt, beta0, targetResidual,
+                                        scale, iterationCount);
         int m = iterationCount;
 
         // At end H := R up to row m
@@ -1122,6 +1089,7 @@ double solveNewtonStep()
         unscaleVector("z");
 
         // Prepare dU values (for Newton update)
+        /* FIX ME -- 2022-07-02
         if (nkCfg.usePreconditioner) {
             // Remove preconditioner effect from values.
             removePreconditioning();
@@ -1131,12 +1099,13 @@ double solveNewtonStep()
                 blk.dU[] = blk.zed[];
             }
         }
+        */
 
         foreach (blk; parallel(localFluidBlocks,1)) {
             foreach (k; 0 .. blk.nvars) blk.dU[k] += blk.x0[k];
         }
 
-        if (isConverged || (r == nkCfg.maxRestarts)) {
+        if (isConverged || (r == nkCfg.maxLinearSolverRestarts)) {
             // We are either converged, or
             // we've run out of restart attempts.
             // In either case, we can leave now.
@@ -1179,8 +1148,8 @@ double solveNewtonStep()
 
     // Set some information before leaving. This might be used in diagnostics file.
     gmresInfo.nRestarts = to!int(r_break);
-    gmresInfo.initResidual = beta0;
-    gmresInfo.finalResidual = beta;
+    gmresInfo.initResidual = beta0.re;
+    gmresInfo.finalResidual = beta.re;
     gmresInfo.iterationCount = iterationCount;
     
     // NOTE: global residual is value at START, before applying Newton update.
@@ -1219,11 +1188,11 @@ void setResiduals()
  */
 void determineScaleFactors(ref ConservedQuantities scale)
 {
-    scale.vec[] = 0.0;
+    scale.vec[] = to!number(0.0);
     // First do this for each block.
     size_t nConserved = GlobalConfig.cqi.n;
     foreach (blk; parallel(localFluidBlocks,1)) {
-        blk.maxR[] = 0.0;
+        blk.maxR.vec[] = to!number(0.0);
         foreach (cell; blk.cells) {
             foreach (ivar; 0 .. nConserved) {
                 blk.maxR.vec[ivar] = fmax(blk.maxR.vec[ivar], fabs(cell.dUdt[0].vec[ivar]));
@@ -1244,7 +1213,7 @@ void determineScaleFactors(ref ConservedQuantities scale)
     }
     // Use a guard on scale values if they get small
     foreach (ivar; 0 .. nConserved) {
-        scale.vec[ivar] = fmax(scale.vec[ivar], minScaleValue);
+        scale.vec[ivar] = fmax(scale.vec[ivar], minScaleFactor);
     }
     // Value is presently maxRate. Store as scale = 1/maxRate.
     foreach (ivar; 0 .. nConserved) {
@@ -1265,44 +1234,12 @@ void determineScaleFactors(ref ConservedQuantities scale)
  */
 double computeGlobalResidual()
 {
-    version(turbulence) {
-        // Scale so that turb quantities don't swamp the norm calculation.
-        size_t nConserved = GlobalConfig.cqi.n;
-        size_t rhoturb = GlobalConfig.cqi.rhoturb;
-        foreach(blk; parallel(localFluidBlocks,1)) {
-            size_t nturb = blk.myConfig.turb_model.nturb;
-            size_t startIdx = 0;
-            foreach (cell; blk.cells) {
-                foreach (it; 0 .. nturb) {
-                    number fac = blk.myConfig.turb_model.gmres_scaling_factor(it);
-                    blk.R[startIdx+rhoturb+it] *= (1./fac);
-                }
-                startIdx += nConserved;
-            }
-        }
-    }
-
     double globalResidual;
     mixin(dotOverBlocks("globalResidual", "R", "R"));
     version(mpi_parallel) {
         MPI_Allreduce(MPI_IN_PLACE, &globalResidual, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     }
     globalResidual = sqrt(globalResidual);
-
-    version(turbulence) {
-        // Unscale: put things back as they were for the linear solver.
-        foreach(blk; parallel(localFluidBlocks,1)) {
-            size_t nturb = blk.myConfig.turb_model.nturb;
-            size_t startIdx = 0;
-            foreach (cell; blk.cells) {
-                foreach (it; 0 .. nturb) {
-                    number fac = blk.myConfig.turb_model.gmres_scaling_factor(it);
-                    blk.R[startIdx+rhoturb+it] *= fac;
-                }
-                startIdx += nConserved;
-            }
-        }
-    }
 
     return globalResidual;
 }
@@ -1323,7 +1260,7 @@ void compute_r0(ConservedQuantities scale)
 {
     size_t nConserved = GlobalConfig.cqi.n;
     foreach (blk; parallel(localFluidBlocks,1)) {
-        blk.x0[] = 0.0;
+        blk.x0[] = to!number(0.0);
         foreach (i; 0 .. blk.r0.length) {
             size_t ivar = i % nConserved;
             blk.r0[i] = scale.vec[ivar]*blk.R[i];
@@ -1377,34 +1314,28 @@ void computePreconditioner()
     size_t nConserved = GlobalConfig.cqi.n;
     double dt = lsi.dt;
     
-    final switch (GlobalConfig.sssOptions.preconditionMatrixType) {
-        case PreconditionMatrixType.jacobi:
-            foreach (blk; parallel(localFluidBlocks,1)) {
-                blk.evaluate_jacobian();
-                blk.flowJacobian.prepare_jacobi_preconditioner(blk.cells, dt, blk.cells.length, nConserved);
-            }
-            break;
-        case PreconditionMatrixType.ilu:
-            foreach (blk; parallel(localFluidBlocks,1)) {
-                blk.evaluate_jacobian();
-                blk.flowJacobian.prepare_ilu_preconditioner(blk.cells, dt, blk.cells.length, nConserved);
-            }
-            break;
-        case PreconditionMatrixType.sgs:
-            foreach (blk; parallel(localFluidBlocks,1)) {
-                blk.evaluate_jacobian();
-                blk.flowJacobian.prepare_sgs_preconditioner(blk.cells, dt, blk.cells.length, nConserved);
-            }
-            break;
-        case PreconditionMatrixType.sgs_relax:
-            foreach (blk; parallel(localFluidBlocks,1)) {
-                blk.evaluate_jacobian();
-                blk.flowJacobian.prepare_sgsr_preconditioner(blk.cells, dt, blk.cells.length, nConserved);
-            }
-            break;
-        case PreconditionMatrixType.lu_sgs:
-            // do nothing
-            break;
+    final switch (nkCfg.preconditioner) {
+    case PreconditionerType.lusgs:
+        // do nothing
+        break;
+    case PreconditionerType.diagonal:
+        goto case PreconditionerType.sgs;
+    case PreconditionerType.jacobi:
+        goto case PreconditionerType.sgs;
+    case PreconditionerType.sgs:
+        foreach (blk; parallel(localFluidBlocks,1)) {
+            blk.evaluate_jacobian();
+            blk.flowJacobian.augment_with_dt(blk.cells, dt, blk.cells.length, nConserved);
+            nm.smla.invert_block_diagonal(blk.flowJacobian.local, blk.flowJacobian.D, blk.flowJacobian.Dinv, blk.cells.length, nConserved);
+        }
+        break;
+    case PreconditionerType.ilu:
+        foreach (blk; parallel(localFluidBlocks,1)) {
+            blk.evaluate_jacobian();
+            blk.flowJacobian.augment_with_dt(blk.cells, dt, blk.cells.length, nConserved);
+            nm.smla.decompILU0(blk.flowJacobian.local);
+        }
+        break;
     }
 }
 
@@ -1440,16 +1371,15 @@ foreach (k; 0 .. blk.nvars) {
  * Authors: RJG and KAD
  * Date: 2022-03-02
  */
-bool performIterations(int maxIterations, ref ConservedQuantities scale, ref int iterationCount)
+bool performIterations(int maxIterations, double dt, number beta0, number targetResidual,
+                       ref ConservedQuantities scale, ref int iterationCount)
 {
     alias cfg = GlobalConfig;
-    alias nkCfg = GlobalConfig.sssOptions;
 
     bool isConverged = false;
     size_t nConserved = cfg.cqi.n;
-    size_t j;
 
-    foreach (j; 0 .. nkCfg.maxIterations) {
+    foreach (j; 0 .. maxIterations) {
         iterationCount = j+1;
 
         // 1. Unscale v
@@ -1461,12 +1391,16 @@ bool performIterations(int maxIterations, ref ConservedQuantities scale, ref int
         }
 
         // 2. Apply preconditioning (if requested)
+        /* FIX ME -- 2022-07-02
         if (nkCfg.usePreconditioner) {
             applyPreconditioning();
         }
         else {
-            blk.zed[] = blk.v[];
+            foreach (blk; parallel(localFluidBlocks,1)) {
+                blk.zed[] = blk.v[];
+            }
         }
+        */
 
         // 3. Jacobian-vector product
         // 3a. Prepare w vector with 1/dt term.
@@ -1474,7 +1408,7 @@ bool performIterations(int maxIterations, ref ConservedQuantities scale, ref int
         foreach (blk; parallel(localFluidBlocks,1)) {
             size_t startIdx = 0;
             foreach (cell; blk.cells) {
-                number dtInv = cfg.with_local_time_stepping ? 1.0/cell.dt_local : 1.0/dt;
+                number dtInv = nkCfg.useLocalTimestep ? 1.0/cell.dt_local : 1.0/dt;
                 blk.w[startIdx .. startIdx + nConserved] = dtInv*blk.zed[startIdx .. startIdx + nConserved];
                 startIdx += nConserved;
             }
@@ -1484,15 +1418,15 @@ bool performIterations(int maxIterations, ref ConservedQuantities scale, ref int
         // if using the method to estimate a perturbation size based on
         // vector 'v'.
         number sigma;
-        if (nkCfg.useComplexMatVecEval) {
+        version (complex_numbers) {
             // For complex-valued Frechet derivative, a very small perturbation
             // works well (almost) all the time.
-            sigma = activePhase.perturbationSize;
+            sigma = nkCfg.frechetDerivativePerturbation;
         }
         else {
             // For real-valued Frechet derivative, we may need to attempt to compute
             // a perturbation size.
-            sigma =  (activePhase.perturbationSize < 0.0) ? computePerturbationSize() : activePhase.perturbationSize;
+            sigma =  (nkCfg.frechetDerivativePerturbation < 0.0) ? computePerturbationSize() : nkCfg.frechetDerivativePerturbation;
         }
 
         // 3b. Evaluate Jz and place result in z
@@ -1571,9 +1505,8 @@ bool performIterations(int maxIterations, ref ConservedQuantities scale, ref int
         copy(Q1, Q0);
 
         // Get residual
-        resid = fabs(g1[j+1]);
-        nIters = to!int(iterCount);
-        linSolResid = (resid/beta0).re;
+        auto resid = fabs(g1[j+1]);
+        auto linSolResid = (resid/beta0).re;
         if (resid <= targetResidual) {
             isConverged = true;
             break;
@@ -1589,39 +1522,41 @@ bool performIterations(int maxIterations, ref ConservedQuantities scale, ref int
  * Authors: KAD and RJG
  * Date: 2022-03-02
  */
+/***** TODO: fix this up. Disabled presently
 void applyPreconditioning()
 {
-    final switch (GlobalConfig.sssOptions.preconditionMatrixType) {
-    case PreconditionMatrixType.jacobi:
+    final switch (nkCfg.preconditioner) {
+    case PreconditionerType.jacobi:
         foreach (blk; parallel(localFluidBlocks,1)) {
             blk.flowJacobian.x[] = blk.v[];
             nm.smla.multiply(blk.flowJacobian.local, blk.flowJacobian.x, blk.zed);
         }
         break;
-    case PreconditionMatrixType.ilu:
+    case PreconditionerType.ilu:
         foreach (blk; parallel(localFluidBlocks,1)) {
             blk.zed[] = blk.v[];
             nm.smla.solve(blk.flowJacobian.local, blk.zed);
         }
         break;
-    case PreconditionMatrixType.sgs:
+    case PreconditionerType.sgs:
         foreach (blk; parallel(localFluidBlocks,1)) {
             blk.zed[] = blk.v[];
             nm.smla.sgs(blk.flowJacobian.local, blk.flowJacobian.diagonal, blk.zed, to!int(nConserved), blk.flowJacobian.D, blk.flowJacobian.Dinv);
         }
         break;
-    case PreconditionMatrixType.sgs_relax:
+    case PreconditionerType.sgs_relax:
         foreach (blk; parallel(localFluidBlocks,1)) {
-            int local_kmax = GlobalConfig.sssOptions.maxSubIterations;
+            int local_kmax = nkCfg.sgsRelaxationIterations;
             blk.zed[] = blk.v[];
             nm.smla.sgsr(blk.flowJacobian.local, blk.zed, blk.flowJacobian.x, to!int(nConserved), local_kmax, blk.flowJacobian.Dinv);
         }
         break;
-    case PreconditionMatrixType.lu_sgs:
+    case PreconditionerType.lu_sgs:
         mixin(lusgs_solve("zed", "v"));
         break;
     } // end switch
 }
+******/
 
 /**
  * Remove preconditioning on values and place in dU.
@@ -1629,6 +1564,7 @@ void applyPreconditioning()
  * Authors: KAD and RJG
  * Date: 2022-03-03
  */
+/***** FIX ME -- 2022-07-02
 void removePreconditioning()
 {
     int nConserved = to!int(GlobalConfig.cqi.n);
@@ -1663,6 +1599,7 @@ void removePreconditioning()
         break;
     } // end switch
 }
+******/
 
 /**
  * Compute perturbation size estimate for real-valued Frechet derivative.
@@ -1682,7 +1619,8 @@ number computePerturbationSize()
     }
 
     size_t nConserved = GlobalConfig.cqi.n;
-    auto eps0 = GlobalConfig.sssOptions.sigma1;
+    auto eps0 = 1.0e-6; // FIX ME: Check with Kyle about what to call this
+                        //         and how to set the value.
     number N = 0.0;
     number sume = 0.0;
     foreach (blk; parallel(localFluidBlocks,1)) {
@@ -1714,27 +1652,31 @@ number computePerturbationSize()
  * Authors: KAD and RJG
  * Date: 2022-03-02
  */
-void evalJacobianVecProd(double sigma)
+void evalJacobianVectorProduct(number sigma)
 {
-    if (GlobalConfig.sssOptions.useComplexMatVecEval)
+    version (complex_number) {
         evalComplexMatVecProd(sigma);
-    else
-        evalRealMatVecProd(sigma);
+    }
+    else {
+        evalRealMatVecProd(sigma.re);
+    }
 }
+
 
 
 void evalResidual(int ftl)
 {
     fnCount++;
     int gtl = 0;
+    double dummySimTime = -1.0;
 
     foreach (blk; parallel(localFluidBlocks,1)) {
         blk.clear_fluxes_of_conserved_quantities();
         foreach (cell; blk.cells) cell.clear_source_vector();
     }
-    exchange_ghost_cell_boundary_data(pseudoSimTime, 0, ftl);
+    exchange_ghost_cell_boundary_data(dummySimTime, 0, ftl);
     foreach (blk; localFluidBlocks) {
-        blk.applyPreReconAction(pseudoSimTime, 0, ftl);
+        blk.applyPreReconAction(dummySimTime, 0, ftl);
     }
 
     // We don't want to switch between flux calculator application while
@@ -1751,7 +1693,7 @@ void evalResidual(int ftl)
     foreach (blk; parallel(localFluidBlocks,1)) {
         foreach(boundary; blk.bc) {
             if (boundary.preSpatialDerivActionAtBndryFaces[0].desc == "CopyCellData") {
-                boundary.preSpatialDerivActionAtBndryFaces[0].apply(pseudoSimTime, gtl, ftl);
+                boundary.preSpatialDerivActionAtBndryFaces[0].apply(dummySimTime, gtl, ftl);
             }
         }
     }
@@ -1763,27 +1705,27 @@ void evalResidual(int ftl)
 
     // for unstructured blocks we need to transfer the convective gradients before the flux calc
     if (allow_high_order_interpolation && (GlobalConfig.interpolation_order > 1)) {
-        exchange_ghost_cell_boundary_convective_gradient_data(pseudoSimTime, gtl, ftl);
+        exchange_ghost_cell_boundary_convective_gradient_data(dummySimTime, gtl, ftl);
     }
 
     foreach (blk; parallel(localFluidBlocks,1)) {
         blk.convective_flux_phase1(allow_high_order_interpolation, gtl);
     }
     foreach (blk; localFluidBlocks) {
-        blk.applyPostConvFluxAction(pseudoSimTime, 0, ftl);
+        blk.applyPostConvFluxAction(dummySimTime, gtl, ftl);
     }
 
     if (GlobalConfig.viscous) {
         foreach (blk; localFluidBlocks) {
-            blk.applyPreSpatialDerivActionAtBndryFaces(pseudoSimTime, 0, ftl);
-            blk.applyPreSpatialDerivActionAtBndryCells(SimState.time, gtl, ftl);
+            blk.applyPreSpatialDerivActionAtBndryFaces(dummySimTime, gtl, ftl);
+            blk.applyPreSpatialDerivActionAtBndryCells(dummySimTime, gtl, ftl);
         }
         foreach (blk; parallel(localFluidBlocks,1)) {
             blk.flow_property_spatial_derivatives(0);
         }
         // for unstructured blocks employing the cell-centered spatial (/viscous) gradient method,
         // we need to transfer the viscous gradients before the flux calc
-        exchange_ghost_cell_boundary_viscous_gradient_data(pseudoSimTime, to!int(gtl), to!int(ftl));
+        exchange_ghost_cell_boundary_viscous_gradient_data(dummySimTime, gtl, ftl);
         foreach (blk; parallel(localFluidBlocks,1)) {
             // we need to average cell-centered spatial (/viscous) gradients to get approximations of the gradients
             // at the cell interfaces before the viscous flux calculation.
@@ -1802,7 +1744,7 @@ void evalResidual(int ftl)
             blk.viscous_flux();
         }
         foreach (blk; localFluidBlocks) {
-            blk.applyPostDiffFluxAction(pseudoSimTime, 0, ftl);
+            blk.applyPostDiffFluxAction(dummySimTime, 0, ftl);
         }
     }
 
@@ -1834,7 +1776,7 @@ void evalResidual(int ftl)
                     j_cell = ijk_indices[1];
                     k_cell = ijk_indices[2];
                 }
-                getUDFSourceTermsForCell(blk.myL, cell, 0, pseudoSimTime, blk.myConfig, blk.id, i_cell, j_cell, k_cell);
+                getUDFSourceTermsForCell(blk.myL, cell, 0, dummySimTime, blk.myConfig, blk.id, i_cell, j_cell, k_cell);
                 cell.add_udf_source_vector();
             }
             cell.time_derivatives(0, ftl);
@@ -1855,10 +1797,9 @@ void evalComplexMatVecProd(double sigma)
 {
     version(complex_numbers) {
         alias cfg = GlobalConfig;
-        alias nkCfg = GlobalConfig.sssOptions;
         
         foreach (blk; parallel(localFluidBlocks,1)) { blk.set_interpolation_order(activePhase.jacobianInterpolationOrder); }
-        if (nkCfg.frozenLimiterForJacobian) {
+        if (activePhase.frozenLimiterForJacobian) {
             foreach (blk; parallel(localFluidBlocks,1)) { GlobalConfig.frozen_limiter = true; }
         }
         // Make a stack-local copy of conserved quantities info
@@ -1895,9 +1836,6 @@ void evalComplexMatVecProd(double sigma)
             foreach(face; blk.faces) { face.fs.clear_imaginary_components(); }
         }
         foreach (blk; parallel(localFluidBlocks,1)) { blk.set_interpolation_order(activePhase.residualInterpolationOrder); }
-        if (GlobalConfig.sssOptions.frozenLimiterForJacobian) {
-            foreach (blk; parallel(localFluidBlocks,1)) { GlobalConfig.frozen_limiter = nkCfg.frozenLimiterForResidual; }
-        }
     } else {
         throw new Error("Oops. Steady-State Solver setting: useComplexMatVecEval is not compatible with real-number version of the code.");
     }
@@ -1914,7 +1852,7 @@ void evalComplexMatVecProd(double sigma)
 void evalRealMatVecProd(double sigma)
 {
     foreach (blk; parallel(localFluidBlocks,1)) { blk.set_interpolation_order(activePhase.jacobianInterpolationOrder); }
-    if (GlobalConfig.sssOptions.frozenLimiterForJacobian) {
+    if (activePhase.frozenLimiterForJacobian) {
         foreach (blk; parallel(localFluidBlocks,1)) { GlobalConfig.frozen_limiter = true; }
     }
     // Make a stack-local copy of conserved quantities info
@@ -1946,10 +1884,6 @@ void evalRealMatVecProd(double sigma)
         }
     }
     foreach (blk; parallel(localFluidBlocks,1)) { blk.set_interpolation_order(activePhase.residualInterpolationOrder); }
-    if (GlobalConfig.sssOptions.frozenLimiterForJacobian) {
-        // Restore setting for residual (R) evaluation.
-        foreach (blk; parallel(localFluidBlocks,1)) { GlobalConfig.frozen_limiter = nkCfg.frozenLimiterForResidual; }
-    }
 }
 
 /**
@@ -1963,10 +1897,11 @@ void evalRealMatVecProd(double sigma)
  * Authors: KAD and RJG
  * Date: 2022-03-05
  */
+/* FIX ME -- 2022-07-02
+      Need to do this as Kyle has suggested. 
 double determineRelaxationFactor()
 {
     alias cfg = GlobalConfig;
-    alias nkCfg = GlobalConfig.sssOptions;
 
     double deltaAllowable = nkCfg.allowableRelativeMassChange;
     double omegaMinAllowable = nkCfg.minimumAllowableRelaxationFactor;
@@ -1980,10 +1915,10 @@ double determineRelaxationFactor()
         int startIdx = 0;
         blk.omega_local = 1.0;
         foreach (cell; blk.cells) {
-            /*---
-             * 1. check and set omega based on mass change.
-             *---
-             */
+            //---
+            // 1. check and set omega based on mass change.
+            //---
+            //
             /// relative mass change projected by update
             deltaProjected = fabs(blk.dU[startIdx+massIdx]/cell.U[0].vec[massIdx]);
             /// mass change ratio
@@ -1996,10 +1931,10 @@ double determineRelaxationFactor()
                 // No point continuing.
                 break;
             }
-            /*---
-             * 2. check that flow state primitives remain valid or adjust relaxation factor.
-             *---
-             */
+            //---
+            // 2. check that flow state primitives remain valid or adjust relaxation factor.
+            //---
+            //
             bool failedDecode;
             do {
                 // Set to false until we find out otherwise.
@@ -2036,6 +1971,7 @@ double determineRelaxationFactor()
     }
     return omega;
 }
+****/
 
 /**
  * Apply Newton update, scaled by relaxation factor, omega.
@@ -2045,7 +1981,7 @@ double determineRelaxationFactor()
  */
 void applyNewtonUpdate(double relaxationFactor)
 {
-    size_t nConseverd = GlobalConfig.cqi.n;
+    size_t nConserved = GlobalConfig.cqi.n;
     double omega = relaxationFactor;
     
     foreach (blk; parallel(localFluidBlocks, 1)) {
@@ -2064,19 +2000,20 @@ void applyNewtonUpdate(double relaxationFactor)
                 // However, we may not be using that check.
                 // In which case, it's probably best to bail out here.
                 string errMsg;
-                errMsg += "Failed update for cell when applying Newton step.\n";
-                errMsg += format("blk-id: %d", blk.id);
-                errMsg += format("cell-id: %d", cell.id);
-                errMsg += format("cell-pos: %s", cell.pos[0]);
-                errMsg += "Error message from decode_conserved:\n";
-                errMsg += e.msg;
-                throw NewtonKrylovException(errMsg);
+                errMsg ~= "Failed update for cell when applying Newton step.\n";
+                errMsg ~= format("blk-id: %d", blk.id);
+                errMsg ~= format("cell-id: %d", cell.id);
+                errMsg ~= format("cell-pos: %s", cell.pos[0]);
+                errMsg ~= "Error message from decode_conserved:\n";
+                errMsg ~= e.msg;
+                throw new NewtonKrylovException(errMsg);
             }
             startIdx += nConserved;
         }
     }
 }
 
+/****
 void writeDiagnostics(int step, double cfl, double dt, ref bool residualsUpToDate)
 {
     double massBalance = computeMassBalance();
@@ -2086,7 +2023,9 @@ void writeDiagnostics(int step, double cfl, double dt, ref bool residualsUpToDat
     }
     // [TODO] finish.
 }
+****/
 
+/****
 void printStatusToScreen(int step, double cfl, double dt, double wallClockElapsed, ref bool residualsUpToDate)
 {
     if (!residualsUpToDate) {
@@ -2111,4 +2050,4 @@ void printStatusToScreen(int step, double cfl, double dt, double wallClockElapse
     }        
     
 }
-
+****/
