@@ -1151,9 +1151,6 @@ final class GlobalConfig {
     version (gpu_chem) {
         static GPUChem gpuChem;
     }
-    version (nk_accelerator) {
-        static SteadyStateSolverOptions sssOptions;
-    }
     version (shape_sensitivity) {
         static ShapeSensitivityCalculatorOptions sscOptions;
     }
@@ -1319,9 +1316,6 @@ public:
     //
     bool do_flow_average;
     //
-    version (nk_accelerator) {
-        SteadyStateSolverOptions sssOptions;
-    }
     version (shape_sensitivity) {
         ShapeSensitivityCalculatorOptions sscOptions;
     }
@@ -1476,7 +1470,6 @@ public:
         //
         do_flow_average = cfg.do_flow_average;
         //
-        version (nk_accelerator) { sssOptions = cfg.sssOptions; }
         version (shape_sensitivity) { sscOptions = cfg.sscOptions; }
         foreach (varName; cfg.flow_variable_list) { flow_variable_list ~= varName; }
     } // end constructor
@@ -1507,7 +1500,6 @@ public:
         stringent_cfl = cfg.stringent_cfl;
         viscous_signal_factor = cfg.viscous_signal_factor;
         turbulent_signal_factor = cfg.turbulent_signal_factor;
-        version(nk_accelerator) { sssOptions = cfg.sssOptions; }
     }
 } // end class LocalConfig
 
@@ -2253,99 +2245,6 @@ void read_control_file()
         writeln("  number_total_snapshots: ", cfg.nTotalSnapshots);
         writeln("  halt_now: ", cfg.halt_now);
     }
-    //
-    version(nk_accelerator) {
-        auto sssOptions = jsonData["steady_state_solver_options"];
-        auto ssso = &(cfg.sssOptions);
-        ssso.usePreconditioner = getJSONbool(sssOptions, "use_preconditioner", ssso.usePreconditioner);
-        ssso.frozenPreconditionerCount = getJSONint(sssOptions, "frozen_preconditioner_count", ssso.frozenPreconditionerCount);
-        ssso.startPreconditioning = getJSONint(sssOptions, "start_preconditioning", ssso.startPreconditioning);
-        ssso.iluFill = getJSONint(sssOptions, "ilu_fill", ssso.iluFill);
-        auto mySaveValue1 = ssso.preconditionMatrixType;
-        try {
-            string name = sssOptions["precondition_matrix_type"].str;
-            ssso.preconditionMatrixType = preconditionMatrixTypeFromName(name);
-        } catch (Exception e) {
-            ssso.preconditionMatrixType = mySaveValue1;
-        }
-        ssso.preconditionerSigma = getJSONdouble(sssOptions, "preconditioner_sigma", ssso.preconditionerSigma);
-        ssso.frozenLimiterOnLHS = getJSONbool(sssOptions, "frozen_limiter_on_lhs", ssso.frozenLimiterOnLHS);
-        ssso.useAdaptivePreconditioner = getJSONbool(sssOptions, "use_adaptive_preconditioner", ssso.useAdaptivePreconditioner);
-        ssso.usePhysicalityCheck = getJSONbool(sssOptions, "use_physicality_check", ssso.usePhysicalityCheck);
-        ssso.physicalityCheckTheta = getJSONdouble(sssOptions, "physicality_check_theta", ssso.physicalityCheckTheta);
-        ssso.useLineSearch = getJSONbool(sssOptions, "use_line_search", ssso.useLineSearch);
-        ssso.inviscidCFL = getJSONbool(sssOptions, "inviscid_cfl", ssso.inviscidCFL);
-        ssso.useScaling = getJSONbool(sssOptions, "use_scaling", ssso.useScaling);
-        ssso.useComplexMatVecEval = getJSONbool(sssOptions, "use_complex_matvec_eval", ssso.useComplexMatVecEval);
-        ssso.nPreSteps = getJSONint(sssOptions, "number_pre_steps", ssso.nPreSteps);
-        ssso.nTotalSteps = getJSONint(sssOptions, "number_total_steps", ssso.nTotalSteps);
-        ssso.maxNumberAttempts = getJSONint(sssOptions, "max_number_attempts", ssso.maxNumberAttempts);
-        ssso.stopOnRelGlobalResid = getJSONdouble(sssOptions, "stop_on_relative_global_residual", ssso.stopOnRelGlobalResid);
-        ssso.stopOnAbsGlobalResid = getJSONdouble(sssOptions, "stop_on_absolute_global_residual", ssso.stopOnAbsGlobalResid);
-        ssso.stopOnMassBalance    = getJSONdouble(sssOptions, "stop_on_mass_balance", ssso.stopOnMassBalance);
-        ssso.maxSubIterations = getJSONint(sssOptions, "max_sub_iterations", ssso.maxSubIterations);
-        ssso.maxOuterIterations = getJSONint(sssOptions, "max_outer_iterations", ssso.maxOuterIterations);
-        ssso.maxRestarts = getJSONint(sssOptions, "max_restarts", ssso.maxRestarts);
-        ssso.nInnerIterations = getJSONint(sssOptions, "number_inner_iterations", ssso.nInnerIterations);
-        // Settings for start-up phase
-        ssso.nStartUpSteps = getJSONint(sssOptions, "number_start_up_steps", ssso.nStartUpSteps);
-        //
-        ssso.cfl_schedule_length = getJSONint(sssOptions, "cfl_schedule_length", ssso.cfl_schedule_length);
-        //
-        double[] default_cfl_schedule_value_data;
-        foreach (i; 0 .. ssso.cfl_schedule_length) { default_cfl_schedule_value_data ~= 0.0; }
-        auto cfl_schedule_value_data = getJSONdoublearray(sssOptions, "cfl_schedule_value_list", default_cfl_schedule_value_data);
-        ssso.cfl_schedule_value_list.length = ssso.cfl_schedule_length;
-        foreach (i; 0 .. ssso.cfl_schedule_length) {
-            ssso.cfl_schedule_value_list[i] = (i < cfl_schedule_value_data.length) ? cfl_schedule_value_data[i] : default_cfl_schedule_value_data[i];
-        }
-        //
-        int[] default_cfl_schedule_iter_data;
-        foreach (i; 0 .. ssso.cfl_schedule_length) { default_cfl_schedule_iter_data ~= 0; }
-        auto cfl_schedule_iter_data = getJSONintarray(sssOptions, "cfl_schedule_iter_list", default_cfl_schedule_iter_data);
-        ssso.cfl_schedule_iter_list.length = ssso.cfl_schedule_length;
-        foreach (i; 0 .. ssso.cfl_schedule_length) {
-            ssso.cfl_schedule_iter_list[i] = (i < cfl_schedule_iter_data.length) ? cfl_schedule_iter_data[i] : default_cfl_schedule_iter_data[i];
-        }
-        //
-        ssso.residual_based_cfl_scheduling = getJSONbool(sssOptions, "residual_based_cfl_scheduling", ssso.residual_based_cfl_scheduling);
-        ssso.cfl_max = getJSONdouble(sssOptions, "cfl_max", ssso.cfl_max);
-        ssso.cfl_min = getJSONdouble(sssOptions, "cfl_min", ssso.cfl_min);
-        ssso.LHSeval0 = getJSONint(sssOptions, "LHSeval0", ssso.LHSeval0);
-        ssso.RHSeval0 = getJSONint(sssOptions, "RHSeval0", ssso.RHSeval0);
-        ssso.cfl0 = getJSONdouble(sssOptions, "cfl0", ssso.cfl0);
-        ssso.eta0 = getJSONdouble(sssOptions, "eta0", ssso.eta0);
-        ssso.tau0 = getJSONdouble(sssOptions, "tau0", ssso.tau0);
-        ssso.sigma0 = getJSONdouble(sssOptions, "sigma0", ssso.sigma0);
-        ssso.p0 = getJSONdouble(sssOptions, "p0", ssso.p0);
-        // Setting for inexact Newton phase
-        ssso.LHSeval1 = getJSONint(sssOptions, "LHSeval1", ssso.LHSeval1);
-        ssso.RHSeval1 = getJSONint(sssOptions, "RHSeval1", ssso.RHSeval1);
-        ssso.cfl1 = getJSONdouble(sssOptions, "cfl1", ssso.cfl1);
-        ssso.tau1 = getJSONdouble(sssOptions, "tau1", ssso.tau1);
-        ssso.sigma1 = getJSONdouble(sssOptions, "sigma1", ssso.sigma1);
-        ssso.p1 = getJSONdouble(sssOptions, "p1", ssso.p1);
-        auto mySaveValue2 = ssso.etaStrategy;
-        try {
-            string name = sssOptions["eta_strategy"].str;
-            ssso.etaStrategy = etaStrategyFromName(name);
-        } catch (Exception e) {
-            ssso.etaStrategy = mySaveValue2;
-        }
-        ssso.eta1 = getJSONdouble(sssOptions, "eta1", ssso.eta1);
-        ssso.eta1_max = getJSONdouble(sssOptions, "eta1_max", ssso.eta1_max);
-        ssso.eta1_min = getJSONdouble(sssOptions, "eta1_min", ssso.eta1_min);
-        ssso.etaRatioPerStep = getJSONdouble(sssOptions, "eta_ratio_per_step", ssso.etaRatioPerStep);
-        ssso.gamma = getJSONdouble(sssOptions, "gamma", ssso.gamma);
-        ssso.alpha = getJSONdouble(sssOptions, "alpha", ssso.alpha);
-        ssso.limiterFreezingResidReduction = getJSONdouble(sssOptions, "limiter_freezing_residual_reduction", ssso.limiterFreezingResidReduction);
-        ssso.limiterFreezingCount = getJSONint(sssOptions, "limiter_freezing_count", ssso.limiterFreezingCount);
-        // Settings for writing out snapshots and diagnostics
-        ssso.snapshotsCount = getJSONint(sssOptions, "snapshots_count", ssso.snapshotsCount);
-        ssso.nTotalSnapshots = getJSONint(sssOptions, "number_total_snapshots", ssso.nTotalSnapshots);
-        ssso.writeDiagnosticsCount = getJSONint(sssOptions, "write_diagnostics_count", ssso.writeDiagnosticsCount);
-        ssso.writeLoadsCount = getJSONint(sssOptions, "write_loads_count", ssso.writeLoadsCount);
-    } // end version(nk_accelerator)
     //
     // Propagate new values to the local copies of config.
     foreach (localConfig; dedicatedConfig) {

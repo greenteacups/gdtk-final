@@ -37,7 +37,7 @@ import nm.bbla;
 import nm.complex;
 import nm.number;
 
-import steadystate_core;
+import nk_accel_core : performNewtonKrylovUpdates; 
 import special_block_init;
 import fluidblock;
 import fluidblockio_old;
@@ -50,8 +50,6 @@ import user_defined_source_terms;
 import conservedquantities;
 import postprocess : readTimesFile;
 import loads;
-//import shape_sensitivity_core : sss_preconditioner_initialisation, sss_preconditioner;
-import solid_loose_coupling_update;
 
 version(mpi_parallel) {
     import mpi;
@@ -223,38 +221,9 @@ int main(string[] args)
     if (GlobalConfig.is_master_task) { writefln("Initialising simulation from snapshot: %d", snapshotStart); }
     init_simulation(snapshotStart, -1, maxCPUs, threadsPerMPITask, maxWallClock);
 
-    // Additional memory allocation specific to steady-state solver
-    allocate_global_fluid_workspace();
-    foreach (blk; localFluidBlocks) {
-        blk.allocate_GMRES_workspace();
-    }
-    allocate_global_solid_workspace();
-    foreach (sblk; localSolidBlocks) {
-        sblk.allocate_GMRES_workspace();
-    }
-
-    /* Check that items are implemented. */
-    bool goodToProceed = true;
-    /*
-    if (GlobalConfig.gmodel_master.n_species > 1) {
-        if (GlobalConfig.is_master_task) {
-            writeln("Newton-Krylov accelerator not implemented for multiple-species calculations.");
-            stdout.flush();
-        }
-        goodToProceed = false;
-    }
-    */
-    if (!goodToProceed) {
-        if (GlobalConfig.is_master_task) {
-            writeln("One or more options are not yet available for the Newton-Krylov accelerator.");
-            writeln("Bailing out!");
-            stdout.flush();
-        }
-        exitFlag = 1;
-        return exitFlag;
-    }
-
-    iterate_to_steady_state(snapshotStart, maxCPUs, threadsPerMPITask);
+    // Additional memory allocation specific to the NK updates is performed
+    // at start-up in next function call.
+    performNewtonKrylovUpdates(snapshotStart, maxCPUs, threadsPerMPITask);
 
     /* Write residuals to file before exit. */
     if (GlobalConfig.is_master_task) {

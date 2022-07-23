@@ -172,7 +172,8 @@ public:
 
     version(nk_accelerator)
     {
-
+    double dtMin;
+    double omegaLocal;
     FlowState fs_save;
 
     // storage for a precondition matrix
@@ -182,11 +183,11 @@ public:
     // These arrays and matrices are directly tied to using the
     // GMRES iterative solver.
     SMatrix!number JcT; // transposed Jacobian (w.r.t conserved variables)
-    ConservedQuantities maxRate, residuals;
+    ConservedQuantities maxR, residuals;
     double normAcc, dotAcc;
     size_t nvars;
     Matrix!number Minv;
-    number[] FU, dU, DinvR, r0, x0, rhs;
+    number[] R, dU, DinvR, r0, x0, rhs;
     number[] v, w, zed;
     number[] g0, g1;
     Matrix!number Q1;
@@ -1106,7 +1107,7 @@ public:
 
     version(nk_accelerator) {
 
-    void initialize_jacobian(int spatial_order_of_jacobian, double sigma)
+        void initialize_jacobian(int spatial_order_of_jacobian, double sigma, int iluFill=-1)
     {
         /*
           This method initializes the flow Jacobian matrix attached the FluidBlock object.
@@ -1145,10 +1146,10 @@ public:
             }
         }
 
-        jacobian_nonzero_pattern(spatial_order_of_jacobian, nentry, cells.length, sigma);
+        jacobian_nonzero_pattern(spatial_order_of_jacobian, nentry, cells.length, sigma, iluFill);
     } // end initialize_jacobian()
 
-    void jacobian_nonzero_pattern(int spatial_order_of_jacobian, size_t nentry, size_t ncells, double sigma) {
+    void jacobian_nonzero_pattern(int spatial_order_of_jacobian, size_t nentry, size_t ncells, double sigma, int iluFill=0) {
         /*
           This routine will fill out the sparse matrix with the appropriate non-zero structure
         */
@@ -1176,11 +1177,11 @@ public:
         }
 
         // For ILU(p>0) we need to modify the sparsity pattern
-        if (myConfig.sssOptions.iluFill > 0) {
+        if (iluFill > 0) {
 
             // [TODO] think about making the lev matrix sparse as well KAD 2022-03-31
             // construct a level matrix
-            int p = GlobalConfig.sssOptions.iluFill;
+            int p = iluFill;
             int n = to!int(ptJac.local.ia.length)-1;
             int[][] lev; // fill levels
             lev.length = n;
@@ -1602,176 +1603,24 @@ public:
         }
 
     } // end evalRHS()
-
-    // The following two methods are used to verify the numerical Jacobian implementation.
-    void verify_jacobian(double sigma)
-    {
-        // we perform a residual evaluation to ensure the ghost cells are filled with good data
-        import steadystate_core;
-        steadystate_core.evalRHS(0.0, 0);
-
-        // calculate the numerical Jacobian
-        initialize_jacobian(GlobalConfig.interpolation_order, sigma);
-        evaluate_jacobian();
-        assert(flowJacobian !is null, "Oops, we expect a flowJacobian object to be attached to the fluidblock.");
-        size_t nConserved = GlobalConfig.cqi.n;
-        // remove the conserved mass variable for multi-species gas
-        if (GlobalConfig.cqi.n_species > 1) { nConserved -= 1; }
-
-        // create an arbitrary unit vector
-        number[] vec;
-        vec.length = cells.length*nConserved;
-        foreach ( i, ref val; vec) { val = i+1; }
-
-        // normalise the vector
-        number norm = 0.0;
-        foreach( i; 0..vec.length) { norm += vec[i]*vec[i]; }
-        norm = sqrt(norm);
-        foreach( ref val; vec) { val = val/norm; }
-
-        // result vectors
-        number[] sol1;
-        sol1.length = vec.length;
-        number[] sol2;
-        sol2.length = vec.length;
-
-        // explicit multiplication of J*vec
-        nm.smla.multiply(flowJacobian.local, vec, sol1);
-
-        // Frechet derivative of J*vec
-        steadystate_core.evalRHS(0.0, 0);
-        evalConservativeJacobianVecProd(vec, sol2);
-
-        // write out results
-        string fileName = "jacobian_test.output";
-        auto outFile = File(fileName, "w");
-        foreach( i; 0..v.length ) {
-            size_t id = i/nConserved;
-            outFile.writef("%d    %d    %.16e    %.16e    %.16f    %.16f \n", i, id, fabs((sol1[i]-sol2[i])/sol1[i]).re, fabs(sol1[i]-sol2[i]).re, sol1[i].re, sol2[i].re);
-        }
-
-        // stop the program at this point
-        import core.runtime;
-        Runtime.terminate();
-    } // end verify_jacobian
-
-    void evalConservativeJacobianVecProd(number[] vec, ref number[] sol) {
-        size_t nConserved = GlobalConfig.cqi.n;
-        // remove the conserved mass variable for multi-species gas
-        if (GlobalConfig.cqi.n_species > 1) { nConserved -= 1; }
-        size_t MASS = GlobalConfig.cqi.mass;
-        size_t X_MOM = GlobalConfig.cqi.xMom;
-        size_t Y_MOM = GlobalConfig.cqi.yMom;
-        size_t Z_MOM = GlobalConfig.cqi.zMom;
-        size_t TOT_ENERGY = GlobalConfig.cqi.totEnergy;
-        size_t TKE = GlobalConfig.cqi.rhoturb;
-        size_t SPECIES = GlobalConfig.cqi.species;
-        size_t MODES = GlobalConfig.cqi.modes;
-        auto EPS = GlobalConfig.sssOptions.sigma0;
-
-        // We perform a Frechet derivative to evaluate J*D^(-1)v
-        size_t nturb = myConfig.turb_model.nturb;
-        size_t nsp = myConfig.gmodel.n_species;
-        size_t nmodes = myConfig.gmodel.n_modes;
-        auto cqi = myConfig.cqi;
-        clear_fluxes_of_conserved_quantities();
-        foreach (cell; cells) cell.clear_source_vector();
-        int cellCount = 0;
-        foreach (cell; cells) {
-            cell.U[1].copy_values_from(cell.U[0]);
-            version(complex_numbers) {
-                cell.U[1].vec[cqi.mass] += complex(0.0, EPS.re*vec[cellCount+MASS].re);
-                cell.U[1].vec[cqi.xMom] += complex(0.0, EPS.re*vec[cellCount+X_MOM].re);
-                cell.U[1].vec[cqi.yMom] += complex(0.0, EPS.re*vec[cellCount+Y_MOM].re);
-                if ( myConfig.dimensions == 3 ) { cell.U[1].vec[cqi.zMom] += complex(0.0, EPS.re*vec[cellCount+Z_MOM].re); }
-                cell.U[1].vec[cqi.totEnergy] += complex(0.0, EPS.re*vec[cellCount+TOT_ENERGY].re);
-                foreach(it; 0 .. nturb) { cell.U[1].vec[cqi.rhoturb+it] += complex(0.0, EPS.re*vec[cellCount+TKE+it].re); }
-                version(multi_species_gas){
-                    if (myConfig.n_species > 1) {
-                        foreach(sp; 0 .. nsp) { cell.U[1].vec[cqi.species+sp] += complex(0.0, EPS.re*vec[cellCount+SPECIES+sp].re); }
-                    }
-                }
-                version(multi_T_gas){
-                    foreach(imode; 0 .. nmodes) { cell.U[1].vec[cqi.modes+imode] += complex(0.0, EPS.re*vec[cellCount+MODES+imode].re); }
-                }
-            } else {
-                cell.U[1].vec[cqi.mass] += (EPS*vec[cellCount+MASS]);
-                cell.U[1].vec[cqi.xMom] += (EPS*vec[cellCount+X_MOM]);
-                cell.U[1].vec[cqi.yMom] += (EPS*vec[cellCount+Y_MOM]);
-                if ( myConfig.dimensions == 3 ) { cell.U[1].vec[cqi.zMom] += (EPS*vec[cellCount+Z_MOM]); }
-                cell.U[1].vec[cqi.totEnergy] += (EPS*vec[cellCount+TOT_ENERGY]);
-                foreach(it; 0 .. nturb) { cell.U[1].vec[cqi.rhoturb+it] += (EPS*vec[cellCount+TKE+it]); }
-                version(multi_species_gas){
-                    if (myConfig.n_species > 1) {
-                        foreach(sp; 0 .. nsp) { cell.U[1].vec[cqi.species+sp] += (EPS*vec[cellCount+SPECIES+sp]); }
-                    }
-                }
-                version(multi_T_gas){
-                    foreach(imode; 0 .. nmodes) { cell.U[1].vec[cqi.modes+imode] += (EPS*vec[cellCount+MODES+imode]); }
-                }
-            }
-            cell.decode_conserved(0, 1, 0.0);
-            cellCount += nConserved;
-        }
-        import steadystate_core;
-        steadystate_core.evalRHS(0.0, 1);
-        //evalRHS(cells, ifaces);
-        cellCount = 0;
-        foreach (cell; cells) {
-            version(complex_numbers) {
-                sol[cellCount+MASS] = cell.dUdt[1].vec[cqi.mass].im/EPS;
-                sol[cellCount+X_MOM] = cell.dUdt[1].vec[cqi.xMom].im/EPS;
-                sol[cellCount+Y_MOM] = cell.dUdt[1].vec[cqi.yMom].im/EPS;
-                if ( myConfig.dimensions == 3 ) { sol[cellCount+Z_MOM] = cell.dUdt[1].vec[cqi.zMom].im/EPS; }
-                sol[cellCount+TOT_ENERGY] = cell.dUdt[1].vec[cqi.totEnergy].im/EPS;
-                foreach(it; 0 .. nturb) { sol[cellCount+TKE+it] = cell.dUdt[1].vec[cqi.rhoturb+it].im/EPS; }
-                version(multi_species_gas){
-                    if (myConfig.n_species > 1) {
-                        foreach(sp; 0 .. nsp) { sol[cellCount+SPECIES+sp] = cell.dUdt[1].vec[cqi.species+sp].im/EPS; }
-                    }
-                }
-                version(multi_T_gas){
-                    foreach(imode; 0 .. nmodes) { sol[cellCount+MODES+imode] = cell.dUdt[1].vec[cqi.modes+imode].im/EPS; }
-                }
-            } else {
-                sol[cellCount+MASS] = (cell.dUdt[1].vec[cqi.mass]-cell.dUdt[0].vec[cqi.mass])/EPS;
-                sol[cellCount+X_MOM] = (cell.dUdt[1].vec[cqi.xMom]-cell.dUdt[0].vec[cqi.xMom])/EPS;
-                sol[cellCount+Y_MOM] = (cell.dUdt[1].vec[cqi.yMom]-cell.dUdt[0].vec[cqi.yMom])/EPS;
-                if ( myConfig.dimensions == 3 ) { sol[cellCount+Z_MOM] = (cell.dUdt[1].vec[cqi.zMom]-cell.dUdt[0].vec[cqi.zMom])/EPS; }
-                sol[cellCount+TOT_ENERGY] = (cell.dUdt[1].vec[cqi.totEnergy]-cell.dUdt[0].vec[cqi.totEnergy])/EPS;
-                foreach(it; 0 .. nturb) { sol[cellCount+TKE+it] = (cell.dUdt[1].vec[cqi.rhoturb+it]-cell.dUdt[0].vec[cqi.rhoturb+it])/EPS; }
-                version(multi_species_gas){
-                    if (myConfig.n_species > 1) {
-                        foreach(sp; 0 .. nsp) { sol[cellCount+SPECIES+sp] = (cell.dUdt[1].vec[cqi.species+sp]-cell.dUdt[0].vec[cqi.species+sp])/EPS; }
-                    }
-                }
-                version(multi_T_gas){
-                    foreach(imode; 0 .. nmodes) { sol[cellCount+MODES+imode] = (cell.dUdt[1].vec[cqi.modes+imode]-cell.dUdt[0].vec[cqi.modes+imode])/EPS; }
-                }
-            }
-
-            cellCount += nConserved;
-        }
-    }
     } // end version(nk_accelerator)
 
     version(nk_accelerator) {
-    void allocate_GMRES_workspace()
+    void allocate_GMRES_workspace(int maxLinearSolverIterations)
     {
         size_t nConserved = GlobalConfig.cqi.n;
         // remove the conserved mass variable for multi-species gas
         if (GlobalConfig.cqi.n_species > 1) { nConserved -= 1; }
         int n_species = GlobalConfig.gmodel_master.n_species();
         int n_modes = GlobalConfig.gmodel_master.n_modes();
-        maxRate = new ConservedQuantities(nConserved);
-        residuals = new ConservedQuantities(nConserved);
+        auto maxRate = new ConservedQuantities(nConserved);
+        auto residuals = new ConservedQuantities(nConserved);
 
-        size_t mOuter = to!size_t(GlobalConfig.sssOptions.maxOuterIterations);
-        size_t mInner = to!size_t(GlobalConfig.sssOptions.nInnerIterations);
+        size_t m = to!size_t(maxLinearSolverIterations);
         size_t n = nConserved*cells.length;
         nvars = n;
         // Now allocate arrays and matrices
-        FU.length = n;
+        R.length = n;
         dU.length = n; dU[] = to!number(0.0);
         r0.length = n;
         x0.length = n;
@@ -1780,16 +1629,10 @@ public:
         v.length = n;
         w.length = n;
         zed.length = n;
-        g0.length = mOuter+1;
-        g1.length = mOuter+1;
-        //h_outer.length = mOuter+1;
-        //hR_outer.length = mOuter+1;
-        V = new Matrix!number(n, mOuter+1);
-        //H0_outer = new Matrix!number(mOuter+1, mOuter);
-        //H1_outer = new Matrix!number(mOuter+1, mOuter);
-        //Gamma_outer = new Matrix!number(mOuter+1, mOuter+1);
-        //Q0_outer = new Matrix!number(mOuter+1, mOuter+1);
-        Q1 = new Matrix!number(mOuter+1, mOuter+1);
+        g0.length = m+1;
+        g1.length = m+1;
+        V = new Matrix!number(n, m+1);
+        Q1 = new Matrix!number(m+1, m+1);
     }
     }
 
