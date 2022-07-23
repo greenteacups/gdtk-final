@@ -110,10 +110,12 @@ struct NKGlobalConfig {
     double stopOnRelativeResidual = 1.0e-99;
     double stopOnAbsoluteResidual = 1.0e-99;
     double stopOnMassBalance = -1.0;
+    int maxConsecutiveBadSteps = 2;
     // CFL control
     double cflMax = 1.0e8;
     double cflMin = 0.001;
     Tuple!(int, "step", double, "cfl")[] cflSchedule;
+    double cflReductionFactor = 0.5;
     // phase control
     int numberOfPhases = 1;
     int[] phaseChangesAtSteps;
@@ -122,7 +124,9 @@ struct NKGlobalConfig {
     bool inviscidCFLOnly = true;
     bool useLineSearch = true;
     bool usePhysicalityCheck = true;
-    double physicalityCheckAllowableChange = 0.2;
+    double allowableRelativeMassChange = 0.2;
+    double minRelaxationFactor = 0.1;
+    double relaxationFactorReductionFactor = 0.7;
     // Linear solver and preconditioning
     int maxLinearSolverIterations = 10;
     int maxLinearSolverRestarts = 0;
@@ -133,8 +137,8 @@ struct NKGlobalConfig {
     PreconditionerType preconditioner = PreconditionerType.ilu;
     // ILU setting
     int iluFill = 0;
-    // SGS setting
-    int sgsRelaxationIterations = 4;
+    // sub iterations for preconditioners
+    int preconditionerSubIterations = 4;
     // output and diagnostics
     int totalSnapshots = 5;
     int stepsBetweenSnapshots = 10;
@@ -149,6 +153,7 @@ struct NKGlobalConfig {
         stopOnRelativeResidual = getJSONdouble(jsonData, "stop_on_relative_residual", stopOnRelativeResidual);
         stopOnAbsoluteResidual = getJSONdouble(jsonData, "stop_on_absolute_residual", stopOnAbsoluteResidual);
         stopOnMassBalance = getJSONdouble(jsonData, "stop_on_mass_balance", stopOnMassBalance);
+        maxConsecutiveBadSteps = getJSONint(jsonData, "max_consecutive_bad_steps", maxConsecutiveBadSteps);
         cflMax = getJSONdouble(jsonData, "cfl_max", cflMax);
         cflMin = getJSONdouble(jsonData, "cfl_min", cflMin);
         auto jsonArray = jsonData["cfl_schedule"].array;
@@ -156,13 +161,16 @@ struct NKGlobalConfig {
             auto values = entry.array;
             cflSchedule ~= tuple!("step", "cfl")(values[0].get!int, values[1].get!double);
         }
+        cflReductionFactor = getJSONdouble(jsonData, "cfl_reduction_factor", cflReductionFactor);
         numberOfPhases = getJSONint(jsonData, "number_of_phases", numberOfPhases);
         phaseChangesAtSteps = getJSONintarray(jsonData, "phase_changes_at_steps", phaseChangesAtSteps);
         useLocalTimestep = getJSONbool(jsonData, "use_local_timestep", useLocalTimestep);
         inviscidCFLOnly = getJSONbool(jsonData, "inviscid_cfl_only", inviscidCFLOnly);
         useLineSearch = getJSONbool(jsonData, "use_line_search", useLineSearch);
         usePhysicalityCheck = getJSONbool(jsonData, "use_physicality_check", usePhysicalityCheck);
-        physicalityCheckAllowableChange = getJSONdouble(jsonData, "physicality_check_allowable_change", physicalityCheckAllowableChange);
+        allowableRelativeMassChange = getJSONdouble(jsonData, "allowable_relative_mass_change", allowableRelativeMassChange);
+        minRelaxationFactor = getJSONdouble(jsonData, "min_relaxation_factor", minRelaxationFactor);
+        relaxationFactorReductionFactor = getJSONdouble(jsonData, "relaxation_factor_reduction_factor", relaxationFactorReductionFactor);
         maxLinearSolverIterations = getJSONint(jsonData, "max_linear_solver_iterations", maxLinearSolverIterations);
         maxLinearSolverRestarts = getJSONint(jsonData, "max_linear_solver_restarts", maxLinearSolverRestarts);
         useScaling = getJSONbool(jsonData, "use_scaling", useScaling);
@@ -172,7 +180,7 @@ struct NKGlobalConfig {
         auto pString = getJSONstring(jsonData, "preconditioner", "NO_SELECTION_SUPPLIED");
         preconditioner = preconditionerTypeFromName(pString);
         iluFill = getJSONint(jsonData, "ilu_fill", iluFill);
-        sgsRelaxationIterations = getJSONint(jsonData, "sgs_relaxation_iterations", sgsRelaxationIterations);
+        preconditionerSubIterations = getJSONint(jsonData, "preconditioner_sub_iterations", preconditionerSubIterations);
         totalSnapshots = getJSONint(jsonData, "total_snapshots", totalSnapshots);
         stepsBetweenSnapshots = getJSONint(jsonData, "steps_between_snapshots", stepsBetweenSnapshots);
         stepsBetweenDiagnostics = getJSONint(jsonData, "steps_between_diagnostics", stepsBetweenDiagnostics);
@@ -419,7 +427,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
     initialiseDiagnosticsFile(diagFname);
     allocateGlobalGMRESWorkspace();
     foreach (blk; localFluidBlocks) {
-        blk.allocate_GMRES_workspace();
+        blk.allocate_GMRES_workspace(nkCfg.maxLinearSolverIterations);
     }
     /* solid blocks don't work just yet.
     allocate_global_solid_workspace();
@@ -496,6 +504,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
     // Start timer right at beginning of stepping.
     auto wallClockStart = Clock.currTime();
     double wallClockElapsed;
+    int numberBadSteps = 0;
     foreach (step; startStep .. nkCfg.maxNewtonSteps) {
         /*---
          * 0. Check for any special actions based on step to perform at START of step
@@ -560,10 +569,8 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
          *---
          */
         globalResidual = solveNewtonStep(dt);
-        // FIX ME -- 2022-07-02
-        //        double omega = nkCfg.usePhysicalityCheck ? determineRelaxationFactor() : 1.0;
-        double omega = 1.0;
-        if (omega >= nkCfg.physicalityCheckAllowableChange) {
+        double omega = nkCfg.usePhysicalityCheck ? determineRelaxationFactor() : 1.0;
+        if (omega >= nkCfg.minRelaxationFactor) {
             // Things are good. Apply omega-scaled update and continue on.
             // We think??? If not, we bail at this point.
             try {
@@ -583,6 +590,33 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
                 }
             }
             cfl = cflSelector.nextCFL(cfl, step, globalResidual, prevGlobalResidual);
+            numberBadSteps = 0;
+        }
+        else if (omega < nkCfg.minRelaxationFactor && activePhase.useAutoCFL) {
+            numberBadSteps++;
+            if (numberBadSteps == nkCfg.maxConsecutiveBadSteps) {
+                writeln("Too many consecutive bad steps while trying to update flow state.\n");
+                writefln("Number of bad steps = %d", numberBadSteps);
+                writefln("Last attempted CFL = %e", cfl);
+                writeln("Bailing out!");
+                exit(1);
+            }
+
+            // Do NOT apply update. Simply change CFL for next step.
+            cfl *= nkCfg.cflReductionFactor;
+            if (cfl <= nkCfg.cflMin) {
+                writeln("The CFL has been reduced due a bad step, but now it has dropped below the minimum allowable CFL.");
+                writefln("current cfl = %e  \t minimum allowable cfl = %e", cfl, nkCfg.cflMin);
+                writeln("Bailing out!");
+                exit(1);
+            }
+            
+            // Return flow states to their original state for next attempt.
+            foreach (blk; parallel(localFluidBlocks,1)) {
+                foreach (cell; blk.cells) {
+                    cell.decode_conserved(0, 0, 0.0);
+                }
+            }
         }
         else {
             if (GlobalConfig.is_master_task) {
@@ -591,16 +625,6 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
                 writeln("Bailing out!");
                 exit(1);
             }
-            /*
-            cfl = nkCfg.cflReductionFactorOnFail * cfl;
-            // Return flow states to their original state for next attempt.
-            foreach (blk; parallel(localFluidBlocks,1)) {
-                foreach (cell; blk.cells) {
-                    cell.decode_conserved(0, 0, 0.0);
-                }
-            }
-            */
-            // [THINK] What do we have to halt repeated reductions in CFL?
         }
         
         /*---
@@ -697,7 +721,7 @@ void initPreconditioner()
             foreach (blk; localFluidBlocks) { blk.initialize_jacobian(-1, nkCfg.preconditionerPerturbation); }
             break;
         case PreconditionerType.ilu:
-            foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, nkCfg.preconditionerPerturbation); }
+            foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, nkCfg.preconditionerPerturbation, nkCfg.iluFill); }
             break;
         case PreconditionerType.sgs:
             foreach (blk; localFluidBlocks) { blk.initialize_jacobian(0, nkCfg.preconditionerPerturbation); }
@@ -1086,20 +1110,18 @@ double solveNewtonStep(double dt)
         }
 
         // unscale 'z'
-        unscaleVector("z");
+        unscaleVector("zed");
 
         // Prepare dU values (for Newton update)
-        /* FIX ME -- 2022-07-02
         if (nkCfg.usePreconditioner) {
             // Remove preconditioner effect from values.
-            removePreconditioning();
+            removePreconditioning(dt);
         }
         else {
             foreach(blk; parallel(localFluidBlocks,1)) {
                 blk.dU[] = blk.zed[];
             }
         }
-        */
 
         foreach (blk; parallel(localFluidBlocks,1)) {
             foreach (k; 0 .. blk.nvars) blk.dU[k] += blk.x0[k];
@@ -1391,16 +1413,14 @@ bool performIterations(int maxIterations, double dt, number beta0, number target
         }
 
         // 2. Apply preconditioning (if requested)
-        /* FIX ME -- 2022-07-02
         if (nkCfg.usePreconditioner) {
-            applyPreconditioning();
+            applyPreconditioning(dt);
         }
         else {
             foreach (blk; parallel(localFluidBlocks,1)) {
                 blk.zed[] = blk.v[];
             }
         }
-        */
 
         // 3. Jacobian-vector product
         // 3a. Prepare w vector with 1/dt term.
@@ -1520,17 +1540,28 @@ bool performIterations(int maxIterations, double dt, number beta0, number target
  * Apply preconditioning to GMRES iterations.
  *
  * Authors: KAD and RJG
- * Date: 2022-03-02
+ * Date: 2022-07-09
  */
-/***** TODO: fix this up. Disabled presently
-void applyPreconditioning()
+void applyPreconditioning(double dt)
 {
+    auto nConserved = GlobalConfig.cqi.n;
+
     final switch (nkCfg.preconditioner) {
+    case PreconditionerType.lusgs:
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.zed[] = to!number(0.0); }
+        mixin(lusgs_solve("zed", "v"));
+        break;
+    case PreconditionerType.diagonal:
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.zed[] = to!number(0.0); }
+        mixin(diagonal_solve("zed", "v"));
+        break;
     case PreconditionerType.jacobi:
-        foreach (blk; parallel(localFluidBlocks,1)) {
-            blk.flowJacobian.x[] = blk.v[];
-            nm.smla.multiply(blk.flowJacobian.local, blk.flowJacobian.x, blk.zed);
-        }
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.zed[] = to!number(0.0); }
+        mixin(jacobi_solve("zed", "v"));
+        break;
+    case PreconditionerType.sgs:
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.zed[] = to!number(0.0); }
+        mixin(sgs_solve("zed", "v"));
         break;
     case PreconditionerType.ilu:
         foreach (blk; parallel(localFluidBlocks,1)) {
@@ -1538,68 +1569,47 @@ void applyPreconditioning()
             nm.smla.solve(blk.flowJacobian.local, blk.zed);
         }
         break;
-    case PreconditionerType.sgs:
-        foreach (blk; parallel(localFluidBlocks,1)) {
-            blk.zed[] = blk.v[];
-            nm.smla.sgs(blk.flowJacobian.local, blk.flowJacobian.diagonal, blk.zed, to!int(nConserved), blk.flowJacobian.D, blk.flowJacobian.Dinv);
-        }
-        break;
-    case PreconditionerType.sgs_relax:
-        foreach (blk; parallel(localFluidBlocks,1)) {
-            int local_kmax = nkCfg.sgsRelaxationIterations;
-            blk.zed[] = blk.v[];
-            nm.smla.sgsr(blk.flowJacobian.local, blk.zed, blk.flowJacobian.x, to!int(nConserved), local_kmax, blk.flowJacobian.Dinv);
-        }
-        break;
-    case PreconditionerType.lu_sgs:
-        mixin(lusgs_solve("zed", "v"));
-        break;
     } // end switch
 }
-******/
+
 
 /**
  * Remove preconditioning on values and place in dU.
  *
  * Authors: KAD and RJG
- * Date: 2022-03-03
+ * Date: 2022-07-09
  */
-/***** FIX ME -- 2022-07-02
-void removePreconditioning()
+
+void removePreconditioning(double dt)
 {
-    int nConserved = to!int(GlobalConfig.cqi.n);
+    auto nConserved = GlobalConfig.cqi.n;
     
-    final switch (GlobalConfig.sssOptions.preconditionMatrixType) {
-    case PreconditionMatrixType.jacobi:
-        foreach(blk; parallel(localFluidBlocks,1)) {
-            nm.smla.multiply(blk.flowJacobian.local, blk.zed, blk.dU);
-        }
+    final switch (nkCfg.preconditioner) {
+    case PreconditionerType.lusgs:
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.dU[] = to!number(0.0); }
+        mixin(lusgs_solve("dU", "zed"));
         break;
-    case PreconditionMatrixType.ilu:
+    case PreconditionerType.diagonal:
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.dU[] = to!number(0.0); }
+        mixin(diagonal_solve("dU", "zed"));
+        break;
+    case PreconditionerType.jacobi:
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.dU[] = to!number(0.0); }
+        mixin(jacobi_solve("dU", "zed"));
+        break;
+    case PreconditionerType.sgs:
+        foreach (blk; parallel(localFluidBlocks,1)) { blk.dU[] = to!number(0.0); }
+        mixin(sgs_solve("dU", "zed"));
+        break;
+    case PreconditionerType.ilu:
         foreach(blk; parallel(localFluidBlocks,1)) {
             blk.dU[] = blk.zed[];
             nm.smla.solve(blk.flowJacobian.local, blk.dU);
         }
         break;
-    case PreconditionMatrixType.sgs:
-        foreach(blk; parallel(localFluidBlocks,1)) {
-            blk.dU[] = blk.zed[];
-            nm.smla.sgs(blk.flowJacobian.local, blk.flowJacobian.diagonal, blk.dU, nConserved, blk.flowJacobian.Dinv, blk.flowJacobian.Dinv);
-        }
-        break;
-    case PreconditionMatrixType.sgs_relax:
-        int local_kmax = GlobalConfig.sssOptions.maxSubIterations;
-        foreach(blk; parallel(localFluidBlocks,1)) {
-            blk.dU[] = blk.zed[];
-            nm.smla.sgsr(blk.flowJacobian.local, blk.dU, blk.flowJacobian.x, nConserved, local_kmax, blk.flowJacobian.Dinv);
-        }
-        break;
-    case PreconditionMatrixType.lu_sgs:
-        mixin(lusgs_solve("dU", "zed"));
-        break;
     } // end switch
 }
-******/
+
 
 /**
  * Compute perturbation size estimate for real-valued Frechet derivative.
@@ -1897,69 +1907,42 @@ void evalRealMatVecProd(double sigma)
  * Authors: KAD and RJG
  * Date: 2022-03-05
  */
-/* FIX ME -- 2022-07-02
-      Need to do this as Kyle has suggested. 
 double determineRelaxationFactor()
 {
-    alias cfg = GlobalConfig;
-
-    double deltaAllowable = nkCfg.allowableRelativeMassChange;
-    double omegaMinAllowable = nkCfg.minimumAllowableRelaxationFactor;
-    double omegaDecrement = nkCfg.decrementOnRelaxationFactor;
+    alias GlobalConfig cfg;
+    double theta = nkCfg.allowableRelativeMassChange;
+    double minOmega = nkCfg.minRelaxationFactor;
+    double omegaReductionFactor = nkCfg.relaxationFactorReductionFactor;
     
     size_t nConserved = cfg.cqi.n;
     size_t massIdx = cfg.cqi.mass;
     
     double omega = 1.0;
-    foreach (blk; parallel(localFluidBlocks,1)) {
-        int startIdx = 0;
-        blk.omega_local = 1.0;
-        foreach (cell; blk.cells) {
-            //---
-            // 1. check and set omega based on mass change.
-            //---
-            //
-            /// relative mass change projected by update
-            deltaProjected = fabs(blk.dU[startIdx+massIdx]/cell.U[0].vec[massIdx]);
-            /// mass change ratio
-            massChangeRatio = deltaProjected/deltaAllowable;
-            /// inverse ratio (so we can compare to relaxation factor)
-            invRatio = 1./massChangeRatio;
-            /// relaxation factor is smaller of invRatio (based on mass change) or whatever our smallest so far is
-            blk.omegaLocal = fmin(invRatio, blk.omegaLocal);
-            if (blk.omegaLocal < omegaMinAllowable) {
-                // No point continuing.
-                break;
-            }
-            //---
-            // 2. check that flow state primitives remain valid or adjust relaxation factor.
-            //---
-            //
-            bool failedDecode;
-            do {
-                // Set to false until we find out otherwise.
-                failedDecode = false;
-                // Attempt to change cell and decode.
-                cell.U[1].copy_values_from(cell.U[0]);
-                foreach (ivar; 0 .. nConserved) {
-                    cell.U[1].vec[ivar] = cell.U[0].vec[ivar] + blk.omegaLocal*blk.dU[startIdx+ivar];
-                }
-                try {
-                    cell.decode_conserved(0, 1, 0.0);
-                }
-                catch (FlowSolverException e) {
-                    failedDecode = true;
-                }
-                if (failedDecode) blk.omega_local -= omegaDecrement;
-                if (blk.omegaLocal < omegaMinAllowable) {
-                    // No point continuing
-                    break;
-                }
-                // return cell to original state
-                cell.decode_conserved(0, 0, 0.0);
-            }
-            while (failedDecode);
 
+    //----
+    // 1. First determine a relaxation factor based on an allowable amount of mass change
+    //----
+    
+    foreach (blk; parallel(localFluidBlocks,1)) {
+        auto cqi = blk.myConfig.cqi;
+        int startIdx = 0;
+        blk.omegaLocal = 1.0;
+        number U, dU, relDiffLimit;
+        foreach (cell; blk.cells) {
+            if (cqi.n_species == 1) {
+                U = cell.U[0].vec[cqi.mass];
+                dU = blk.dU[startIdx+cqi.mass];
+            }
+            else {
+                U = 0.0;
+                dU = 0.0;
+                foreach (isp; 0 .. cqi.n_species) {
+                    U += cell.U[0].vec[cqi.species+isp];
+                    dU += blk.dU[startIdx+cqi.species+isp];
+                }
+            }
+            relDiffLimit = fabs(dU/(theta*U));
+            blk.omegaLocal = 1.0/(fmax(relDiffLimit.re, 1.0/blk.omegaLocal));
             startIdx += nConserved;
         }
     }
@@ -1967,11 +1950,53 @@ double determineRelaxationFactor()
     foreach (blk; localFluidBlocks) omega = fmin(omega, blk.omegaLocal);
     version (mpi_parallel) {
         // In parallel, find minimum and communicate to all processes
-        MPI_Allreduce(MPI_IN_PLACE, &(omega.re), 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, &(omega), 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
     }
+
+    //----
+    // 2. Now check if primitives are valid. If not adjust relaxation factor until they are.
+    //----
+
+    foreach (blk; parallel(localFluidBlocks, 1)) {
+        int startIdx = 0;
+        foreach (cell; blk.cells) {
+            bool failedDecode = false;
+            while (blk.omegaLocal >= minOmega) {
+                cell.U[1].copy_values_from(cell.U[0]);
+                foreach (i; 0 .. nConserved) {
+                    cell.U[1].vec[i] = cell.U[0].vec[i] + blk.omegaLocal * blk.dU[startIdx+i];
+                }
+                try {
+                    cell.decode_conserved(0, 1, 0.0);
+                }
+                catch (FlowSolverException e) {
+                    failedDecode = true;
+                }
+                // return cell to original state
+                cell.decode_conserved(0, 0, 0.0);
+
+                if (failedDecode) {
+                    blk.omegaLocal *= omegaReductionFactor;
+                    failedDecode = false;
+                }
+                else {
+                    // Update was good, so omega is ok for this cell.
+                    break;
+                }
+            }
+            startIdx += nConserved;
+        }
+    }
+    // In serial, find minimum omega across all blocks.
+    foreach (blk; localFluidBlocks) omega = fmin(omega, blk.omegaLocal);
+    version (mpi_parallel) {
+        // In parallel, find minimum and communicate to all processes
+        MPI_Allreduce(MPI_IN_PLACE, &(omega), 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    }
+    
     return omega;
 }
-****/
+
 
 /**
  * Apply Newton update, scaled by relaxation factor, omega.
@@ -2051,3 +2076,116 @@ void printStatusToScreen(int step, double cfl, double dt, double wallClockElapse
     
 }
 ****/
+
+/*---------------------------------------------------------------------
+ * Mixins for performing preconditioner actions
+ *---------------------------------------------------------------------
+ */
+
+string diagonal_solve(string lhs_vec, string rhs_vec)
+{
+    string code = "{
+
+    foreach (blk; parallel(localFluidBlocks,1)) {
+        nm.smla.multiply(blk.flowJacobian.local, blk."~rhs_vec~", blk."~lhs_vec~"[]);
+    }
+
+    }";
+    return code;
+}
+
+string jacobi_solve(string lhs_vec, string rhs_vec)
+{
+    string code = "{
+
+    int kmax = nkCfg.preconditionerSubIterations;
+    foreach (k; 0 .. kmax) {
+         foreach (blk; parallel(localFluidBlocks,1)) {
+               blk.rhs[] = to!number(0.0);
+               nm.smla.multiply_block_upper_triangular(blk.flowJacobian.local, blk."~lhs_vec~"[], blk.rhs[], blk.cells.length, nConserved);
+               nm.smla.multiply_block_lower_triangular(blk.flowJacobian.local, blk."~lhs_vec~"[], blk.rhs[], blk.cells.length, nConserved);
+               blk.rhs[] = blk."~rhs_vec~"[] - blk.rhs[];
+               blk."~lhs_vec~"[] = to!number(0.0);
+               nm.smla.multiply_block_diagonal(blk.flowJacobian.local, blk.rhs[], blk."~lhs_vec~"[], blk.cells.length, nConserved);
+         }
+    }
+
+    }";
+    return code;
+}
+
+string sgs_solve(string lhs_vec, string rhs_vec)
+{
+    string code = "{
+
+    int kmax = nkCfg.preconditionerSubIterations;
+    foreach (k; 0 .. kmax) {
+         foreach (blk; parallel(localFluidBlocks,1)) {
+             // forward sweep
+             blk.rhs[] = to!number(0.0);
+             nm.smla.multiply_block_upper_triangular(blk.flowJacobian.local, blk."~lhs_vec~", blk.rhs, blk.cells.length, nConserved);
+             blk.rhs[] = blk."~rhs_vec~"[] - blk.rhs[];
+             nm.smla.block_lower_triangular_solve(blk.flowJacobian.local, blk.rhs[], blk."~lhs_vec~"[], blk.cells.length, nConserved);
+
+             // backward sweep
+             blk.rhs[] = to!number(0.0);
+             nm.smla.multiply_block_lower_triangular(blk.flowJacobian.local, blk."~lhs_vec~"[], blk.rhs[], blk.cells.length, nConserved);
+             blk.rhs[] = blk."~rhs_vec~"[] - blk.rhs[];
+             nm.smla.block_upper_triangular_solve(blk.flowJacobian.local, blk.rhs, blk."~lhs_vec~"[], blk.cells.length, nConserved);
+         }
+    }
+
+    }";
+    return code;
+}
+
+string lusgs_solve(string lhs_vec, string rhs_vec)
+{
+    string code = "{
+
+    int kmax = nkCfg.preconditionerSubIterations;
+    bool matrix_based = false;
+    double omega = 2.0;
+    double dummySimTime = -1.0;
+
+    // 1. initial subiteration
+    foreach (blk; parallel(localFluidBlocks,1)) {
+        int startIdx = 0;
+        foreach (cell; blk.cells) {
+            number dtInv;
+            if (blk.myConfig.with_local_time_stepping) { dtInv = 1.0/cell.dt_local; }
+            else { dtInv = 1.0/dt; }
+            auto z_local = blk."~lhs_vec~"[startIdx .. startIdx+nConserved]; // this is actually a reference not a copy
+            cell.lusgs_startup_iteration(dtInv, omega, z_local, blk."~rhs_vec~"[startIdx .. startIdx+nConserved]);
+            startIdx += nConserved;
+        }
+    }
+
+    // 2. kmax subiterations
+    foreach (k; 0 .. kmax) {
+         // shuffle dU values
+         foreach (blk; parallel(localFluidBlocks,1)) {
+             int startIdx = 0;
+             foreach (cell; blk.cells) {
+                 cell.dUk[0 .. nConserved] = blk."~lhs_vec~"[startIdx .. startIdx+nConserved];
+                 startIdx += nConserved;
+             }
+         }
+
+         // exchange boundary dU values
+         exchange_ghost_cell_boundary_data(dummySimTime, 0, 0);
+
+         // perform subiteraion
+         foreach (blk; parallel(localFluidBlocks,1)) {
+             int startIdx = 0;
+             foreach (cell; blk.cells) {
+                  auto z_local = blk."~lhs_vec~"[startIdx .. startIdx+nConserved]; // this is actually a reference not a copy
+                  cell.lusgs_relaxation_iteration(omega, matrix_based, z_local, blk."~rhs_vec~"[startIdx .. startIdx+nConserved]);
+                  startIdx += nConserved;
+             }
+         }
+    }
+
+    }";
+    return code;
+}

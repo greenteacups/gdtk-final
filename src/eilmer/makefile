@@ -677,7 +677,7 @@ e4zmpi: main.d $(EILMER_FILES) \
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS) -L-lmpi
 
-e4-nk-shared: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-nk-shared: nk_accelerator.d nk_accel_core.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -692,7 +692,7 @@ e4-nk-shared: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_upd
 		$(DVERSION)complex_numbers \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		nk_accelerator_with_string_subst.d nk_accel_core.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -702,7 +702,7 @@ e4-nk-shared: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_upd
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS)
 
-e4-nk-shared-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-nk-shared-real: nk_accelerator.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -716,7 +716,7 @@ e4-nk-shared-real: nk_accelerator.d steadystate_core.d solid/solid_loose_couplin
 	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		nk_accelerator_with_string_subst.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -726,7 +726,7 @@ e4-nk-shared-real: nk_accelerator.d steadystate_core.d solid/solid_loose_couplin
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS)
 
-e4-nk-dist: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-nk-dist: nk_accelerator.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -743,7 +743,7 @@ e4-nk-dist: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_updat
 		$(DVERSION)complex_numbers \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		mpi_nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		mpi_nk_accelerator_with_string_subst.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -753,7 +753,7 @@ e4-nk-dist: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_updat
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS) -L-lmpi
 
-e4-nk-dist-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-nk-dist-real: nk_accelerator.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -769,7 +769,7 @@ e4-nk-dist-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_
 		$(DVERSION)mpi_parallel -I$(OPENMPI_DIR) $(MPI_LIB_DIRS_SEARCH) \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		mpi_nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		mpi_nk_accelerator_with_string_subst.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -779,7 +779,7 @@ e4-nk-dist-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS) -L-lmpi
 
-e4-pir-shared: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-pir-shared: nk_accelerator.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -795,7 +795,7 @@ e4-pir-shared: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_up
 		$(DVERSION)complex_numbers \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		nk_accelerator_with_string_subst.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -805,7 +805,7 @@ e4-pir-shared: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_up
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS)
 
-e4-pir-shared-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-pir-shared-real: nk_accelerator.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -820,7 +820,7 @@ e4-pir-shared-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupli
 		$(DVERSION)pir \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		nk_accelerator_with_string_subst.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -830,7 +830,7 @@ e4-pir-shared-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupli
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS)
 
-e4-pir-dist: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-pir-dist: nk_accelerator.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -848,7 +848,7 @@ e4-pir-dist: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_upda
 		$(DVERSION)complex_numbers \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		mpi_nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		mpi_nk_accelerator_with_string_subst.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -858,7 +858,7 @@ e4-pir-dist: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_upda
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS) -L-lmpi
 
-e4-pir-dist-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4-pir-dist-real: nk_accelerator.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -875,7 +875,7 @@ e4-pir-dist-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling
 		$(DVERSION)pir \
                 $(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \
-		mpi_nk_accelerator_with_string_subst.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		mpi_nk_accelerator_with_string_subst.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
@@ -885,7 +885,7 @@ e4-pir-dist-real: nk_accelerator.d steadystate_core.d solid/solid_loose_coupling
 		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
 		$(DLINKFLAGS) -L-lmpi
 
-e4ssc: shape_sensitivity_calc.d shape_sensitivity_core.d steadystate_core.d solid/solid_loose_coupling_update.d $(EILMER_FILES) \
+e4ssc: shape_sensitivity_calc.d shape_sensitivity_core.d $(EILMER_FILES) \
 	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
 	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
@@ -898,7 +898,7 @@ e4ssc: shape_sensitivity_calc.d shape_sensitivity_core.d steadystate_core.d soli
 		$(DVERSION)shape_sensitivity \
 		$(DVERSION)nk_accelerator \
 		shape_sensitivity_calc_with_rev_string.d \
-		shape_sensitivity_core.d steadystate_core.d solid/solid_loose_coupling_update.d \
+		shape_sensitivity_core.d \
 		$(EILMER_FILES) \
 		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
 		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \

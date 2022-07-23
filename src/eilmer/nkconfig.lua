@@ -16,11 +16,13 @@ NewtonKrylovGlobalConfigHidden = {
    stop_on_relative_residual = 1.0e-99,
    stop_on_absolute_residual = 1.0e-99,
    stop_on_mass_balance = -1.0,
+   max_consecutive_bad_steps = 2,
 
    -- CFL control
    cfl_max = 1.0e8,
    cfl_min = 0.001,
    cfl_schedule = { {0, 1.0}, {100, 1.0} },
+   cfl_reduction_factor = 0.5,  -- only applies when auto-CFL is in use
 
    -- phase control
    number_of_phases = 1,
@@ -31,7 +33,9 @@ NewtonKrylovGlobalConfigHidden = {
    inviscid_cfl_only = true,
    use_line_search = true,
    use_physicality_check = true,
-   physicality_check_allowable_change = 0.2,
+   allowable_relative_mass_change = 0.2,
+   min_relaxation_factor = 0.1,
+   relaxation_factor_reduction_factor = 0.7,
 
    -- linear solver and preconditioner
    max_linear_solver_iterations = 10,
@@ -46,9 +50,9 @@ NewtonKrylovGlobalConfigHidden = {
    --
    ilu_fill = 0,
    --
-   -- SGS preconditioner settings
+   -- iterative solve-type preconditioner settings
    --
-   sgs_relaxation_iterations = 4,
+   preconditioner_sub_iterations = 4,
    
    -- Output and diagnostics
    total_snapshots = 5,
@@ -177,6 +181,7 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
    f:write(string.format('"stop_on_relative_residual": %.18e,\n', nkConfig.stop_on_relative_residual))
    f:write(string.format('"stop_on_absolute_residual": %.18e,\n', nkConfig.stop_on_absolute_residual))
    f:write(string.format('"stop_on_mass_balance": %.18e,\n', nkConfig.stop_on_mass_balance))
+   f:write(string.format('"max_consecutive_bad_steps": %d,\n', nkConfig.max_consecutive_bad_steps))
    -- CFL control
    f:write(string.format('"cfl_max": %.18e,\n', nkConfig.cfl_max))
    f:write(string.format('"cfl_min": %.18e,\n', nkConfig.cfl_min))
@@ -186,6 +191,7 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
       if i < #(nkConfig.cfl_schedule) then f:write(', ') end
    end
    f:write('],\n')
+   f:write(string.format('"cfl_reduction_factor": %.18e,\n', nkConfig.cfl_reduction_factor))
    -- phase control
    f:write(string.format('"number_of_phases": %d,\n', nkConfig.number_of_phases))
    f:write('"phase_changes_as_steps": [ ')
@@ -199,7 +205,9 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
    f:write(string.format('"inviscid_cfl_only": %s,\n', tostring(nkConfig.inviscid_cfl_only)))
    f:write(string.format('"use_line_search": %s,\n', tostring(nkConfig.use_line_search)))
    f:write(string.format('"use_physicality_check": %s,\n', tostring(nkConfig.use_physicality_check)))
-   f:write(string.format('"physicality_check_allowable_change": %.18e,\n', nkConfig.physicality_check_allowable_change))
+   f:write(string.format('"allowable_relative_mass_change": %.18e,\n', nkConfig.allowable_relative_mass_change))
+   f:write(string.format('"min_relaxation_factor": %.18e,\n', nkConfig.min_relaxation_factor))
+   f:write(string.format('"relaxation_factor_reduction_factor": %.18e,\n', nkConfig.relaxation_factor_reduction_factor))
    -- linear solver and preconditioner
    f:write(string.format('"max_linear_solver_iterations": %d,\n', nkConfig.max_linear_solver_iterations))
    f:write(string.format('"max_linear_solver_restarts": %d,\n', nkConfig.max_linear_solver_restarts))
@@ -209,7 +217,7 @@ local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
    f:write(string.format('"preconditioner_perturbation": %.18e,\n', nkConfig.preconditioner_perturbation))
    f:write(string.format('"preconditioner": "%s",\n', nkConfig.preconditioner))
    f:write(string.format('"ilu_fill": %d,\n', nkConfig.ilu_fill))
-   f:write(string.format('"sgs_relaxation_iterations": %d,\n', nkConfig.sgs_relaxation_iterations))
+   f:write(string.format('"preconditioner_sub_iterations": %d,\n', nkConfig.preconditioner_sub_iterations))
    -- output and diagnostics
    f:write(string.format('"total_snapshots": %d,\n', nkConfig.total_snapshots))
    f:write(string.format('"steps_between_snapshots": %d,\n', nkConfig.steps_between_snapshots))

@@ -86,10 +86,9 @@ public:
     abstract void clearSources();
 
     version(nk_accelerator) {
-    void allocate_GMRES_workspace()
+    void allocate_GMRES_workspace(int maxLinearSolverIterations)
     {
-        size_t mOuter = to!size_t(GlobalConfig.sssOptions.maxOuterIterations);
-        size_t mInner = to!size_t(GlobalConfig.sssOptions.nInnerIterations);
+        size_t m = to!size_t(maxLinearSolverIterations);
         size_t n = 1*activeCells.length;
         nvars = n;
         // Now allocate arrays and matrices
@@ -101,16 +100,10 @@ public:
         v.length = n;
         w.length = n;
         zed.length = n;
-        g0.length = mOuter+1;
-        g1.length = mOuter+1;
-        //h_outer.length = mOuter+1;
-        //hR_outer.length = mOuter+1;
-        V = new Matrix!number(n, mOuter+1);
-        //H0_outer = new Matrix!number(mOuter+1, mOuter);
-        //H1_outer = new Matrix!number(mOuter+1, mOuter);
-        //Gamma_outer = new Matrix!number(mOuter+1, mOuter+1);
-        //Q0_outer = new Matrix!number(mOuter+1, mOuter+1);
-        Q1 = new Matrix!number(mOuter+1, mOuter+1);
+        g0.length = m+1;
+        g1.length = m+1;
+        V = new Matrix!number(n, m+1);
+        Q1 = new Matrix!number(m+1, m+1);
     }
     }
 }
