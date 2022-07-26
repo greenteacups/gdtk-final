@@ -183,7 +183,7 @@ public:
     // These arrays and matrices are directly tied to using the
     // GMRES iterative solver.
     SMatrix!number JcT; // transposed Jacobian (w.r.t conserved variables)
-    ConservedQuantities maxR, residuals;
+    ConservedQuantities maxRate, residuals;
     double normAcc, dotAcc;
     size_t nvars;
     Matrix!number Minv;
@@ -1591,8 +1591,8 @@ public:
         if (GlobalConfig.cqi.n_species > 1) { nConserved -= 1; }
         int n_species = GlobalConfig.gmodel_master.n_species();
         int n_modes = GlobalConfig.gmodel_master.n_modes();
-        auto maxRate = new ConservedQuantities(nConserved);
-        auto residuals = new ConservedQuantities(nConserved);
+        maxRate = new ConservedQuantities(nConserved);
+        residuals = new ConservedQuantities(nConserved);
 
         size_t m = to!size_t(maxLinearSolverIterations);
         size_t n = nConserved*cells.length;

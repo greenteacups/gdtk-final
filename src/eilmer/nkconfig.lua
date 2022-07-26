@@ -8,7 +8,7 @@
 NewtonKrylovGlobalConfigHidden = {
    
    -- global control based on step number
-   set_reference_residuals_at_step = 1,
+   number_of_steps_for_setting_reference_residuals = 10,
    freeze_limiter_at_step = -1,
 
    -- stopping criterion
@@ -19,8 +19,8 @@ NewtonKrylovGlobalConfigHidden = {
    max_consecutive_bad_steps = 2,
 
    -- CFL control
-   cfl_max = 1.0e8,
-   cfl_min = 0.001,
+   max_cfl = 1.0e8,
+   min_cfl = 0.001,
    cfl_schedule = { {0, 1.0}, {100, 1.0} },
    cfl_reduction_factor = 0.5,  -- only applies when auto-CFL is in use
 
@@ -79,6 +79,69 @@ NewtonKrylovGlobalConfigHidden = {
 
 NewtonKrylovGlobalConfig = {}
 setmetatable(NewtonKrylovGlobalConfig, NewtonKrylovGlobalConfigHidden)
+
+local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
+   local f = assert(io.open(fileName, "w"))
+   f:write("{\n")
+   -- global control based on step
+   f:write(string.format('"number_of_steps_for_setting_reference_residuals": %d,\n', nkConfig.number_of_steps_for_setting_reference_residuals))
+   f:write(string.format('"freeze_limiter_at_step": %d,\n', nkConfig.freeze_limiter_at_step))
+   -- stopping criterion
+   f:write(string.format('"max_newton_steps": %d,\n', nkConfig.max_newton_steps))
+   f:write(string.format('"stop_on_relative_residual": %.18e,\n', nkConfig.stop_on_relative_residual))
+   f:write(string.format('"stop_on_absolute_residual": %.18e,\n', nkConfig.stop_on_absolute_residual))
+   f:write(string.format('"stop_on_mass_balance": %.18e,\n', nkConfig.stop_on_mass_balance))
+   f:write(string.format('"max_consecutive_bad_steps": %d,\n', nkConfig.max_consecutive_bad_steps))
+   -- CFL control
+   f:write(string.format('"max_cfl": %.18e,\n', nkConfig.max_cfl))
+   f:write(string.format('"min_cfl": %.18e,\n', nkConfig.min_cfl))
+   f:write('"cfl_schedule": [ ')
+   for i,e in ipairs(nkConfig.cfl_schedule) do
+      f:write(string.format(' [ %d, %.3e ]', e[1], e[2]))
+      if i < #(nkConfig.cfl_schedule) then f:write(', ') end
+   end
+   f:write('],\n')
+   f:write(string.format('"cfl_reduction_factor": %.18e,\n', nkConfig.cfl_reduction_factor))
+   -- phase control
+   f:write(string.format('"number_of_phases": %d,\n', nkConfig.number_of_phases))
+   f:write('"phase_changes_at_steps": [ ')
+   for i,e in ipairs(nkConfig.phase_changes_at_steps) do
+      f:write(string.format('%d', e))
+      if i < #(nkConfig.phase_change_at_steps) then f:write(', ') end
+   end
+   f:write('],\n')
+   -- Newton stepping control and continuation
+   f:write(string.format('"use_local_timestep": %s,\n', tostring(nkConfig.use_local_timestep)))
+   f:write(string.format('"inviscid_cfl_only": %s,\n', tostring(nkConfig.inviscid_cfl_only)))
+   f:write(string.format('"use_line_search": %s,\n', tostring(nkConfig.use_line_search)))
+   f:write(string.format('"use_physicality_check": %s,\n', tostring(nkConfig.use_physicality_check)))
+   f:write(string.format('"allowable_relative_mass_change": %.18e,\n', nkConfig.allowable_relative_mass_change))
+   f:write(string.format('"min_relaxation_factor": %.18e,\n', nkConfig.min_relaxation_factor))
+   f:write(string.format('"relaxation_factor_reduction_factor": %.18e,\n', nkConfig.relaxation_factor_reduction_factor))
+   -- linear solver and preconditioner
+   f:write(string.format('"max_linear_solver_iterations": %d,\n', nkConfig.max_linear_solver_iterations))
+   f:write(string.format('"max_linear_solver_restarts": %d,\n', nkConfig.max_linear_solver_restarts))
+   f:write(string.format('"use_scaling": %s,\n', tostring(nkConfig.use_scaling)))
+   f:write(string.format('"frechet_derivative_perturbation": %.18e,\n', nkConfig.frechet_derivative_perturbation))
+   f:write(string.format('"use_preconditioner": %s,\n', tostring(nkConfig.use_preconditioner)))
+   f:write(string.format('"preconditioner_perturbation": %.18e,\n', nkConfig.preconditioner_perturbation))
+   f:write(string.format('"preconditioner": "%s",\n', nkConfig.preconditioner))
+   f:write(string.format('"ilu_fill": %d,\n', nkConfig.ilu_fill))
+   f:write(string.format('"preconditioner_sub_iterations": %d,\n', nkConfig.preconditioner_sub_iterations))
+   -- output and diagnostics
+   f:write(string.format('"total_snapshots": %d,\n', nkConfig.total_snapshots))
+   f:write(string.format('"steps_between_snapshots": %d,\n', nkConfig.steps_between_snapshots))
+   f:write(string.format('"steps_between_diagnostics": %d,\n', nkConfig.steps_between_diagnostics))
+   f:write(string.format('"steps_between_loads_update": %d,\n', nkConfig.steps_between_loads_update))
+   -- write out phases
+   for i=1,#nkPhases do
+      f:write(nkPhases[i]:tojson() .. ",\n")
+   end
+   f:write('"dummy_entry_without_trailing_comma": 0\n') -- no comma on last entry
+   f:write('}\n')
+   f:close()
+end
+
 
 NewtonKrylovPhaseDefaults = {
    residual_interpolation_order = 2,
@@ -168,68 +231,6 @@ local function setIgnoreFlagInPhases(nkPhases)
       nkPhases[i].ignore_stopping_criteria = true
    end
    nkPhases[#nkPhases].ignore_stopping_criteria = false
-end
-
-local function writeNKConfigToFile(nkConfig, nkPhases, fileName)
-   local f = assert(io.open(fileName, "w"))
-   f:write("{\n")
-   -- global control based on step
-   f:write(string.format('"set_reference_residuals_at_step": %d,\n', nkConfig.set_reference_residuals_at_step))
-   f:write(string.format('"freeze_limiter_at_step": %d,\n', nkConfig.freeze_limiter_at_step))
-   -- stopping criterion
-   f:write(string.format('"max_newton_steps": %d,\n', nkConfig.max_newton_steps))
-   f:write(string.format('"stop_on_relative_residual": %.18e,\n', nkConfig.stop_on_relative_residual))
-   f:write(string.format('"stop_on_absolute_residual": %.18e,\n', nkConfig.stop_on_absolute_residual))
-   f:write(string.format('"stop_on_mass_balance": %.18e,\n', nkConfig.stop_on_mass_balance))
-   f:write(string.format('"max_consecutive_bad_steps": %d,\n', nkConfig.max_consecutive_bad_steps))
-   -- CFL control
-   f:write(string.format('"cfl_max": %.18e,\n', nkConfig.cfl_max))
-   f:write(string.format('"cfl_min": %.18e,\n', nkConfig.cfl_min))
-   f:write('"cfl_schedule": [ ')
-   for i,e in ipairs(nkConfig.cfl_schedule) do
-      f:write(string.format(' [ %d, %.3e ]', e[1], e[2]))
-      if i < #(nkConfig.cfl_schedule) then f:write(', ') end
-   end
-   f:write('],\n')
-   f:write(string.format('"cfl_reduction_factor": %.18e,\n', nkConfig.cfl_reduction_factor))
-   -- phase control
-   f:write(string.format('"number_of_phases": %d,\n', nkConfig.number_of_phases))
-   f:write('"phase_changes_as_steps": [ ')
-   for i,e in ipairs(nkConfig.phase_changes_at_steps) do
-      f:write(string.format('%d', e))
-      if i < #(nkConfig.phase_change_at_steps) then f:write(', ') end
-   end
-   f:write('],\n')
-   -- Newton stepping control and continuation
-   f:write(string.format('"use_local_timestep": %s,\n', tostring(nkConfig.use_local_timestep)))
-   f:write(string.format('"inviscid_cfl_only": %s,\n', tostring(nkConfig.inviscid_cfl_only)))
-   f:write(string.format('"use_line_search": %s,\n', tostring(nkConfig.use_line_search)))
-   f:write(string.format('"use_physicality_check": %s,\n', tostring(nkConfig.use_physicality_check)))
-   f:write(string.format('"allowable_relative_mass_change": %.18e,\n', nkConfig.allowable_relative_mass_change))
-   f:write(string.format('"min_relaxation_factor": %.18e,\n', nkConfig.min_relaxation_factor))
-   f:write(string.format('"relaxation_factor_reduction_factor": %.18e,\n', nkConfig.relaxation_factor_reduction_factor))
-   -- linear solver and preconditioner
-   f:write(string.format('"max_linear_solver_iterations": %d,\n', nkConfig.max_linear_solver_iterations))
-   f:write(string.format('"max_linear_solver_restarts": %d,\n', nkConfig.max_linear_solver_restarts))
-   f:write(string.format('"use_scaling": %s,\n', tostring(nkConfig.use_scaling)))
-   f:write(string.format('"frechet_derivative_perturbation": %.18e,\n', nkConfig.frechet_derivative_perturbation))
-   f:write(string.format('"use_preconditioner": %s,\n', tostring(nkConfig.use_preconditioner)))
-   f:write(string.format('"preconditioner_perturbation": %.18e,\n', nkConfig.preconditioner_perturbation))
-   f:write(string.format('"preconditioner": "%s",\n', nkConfig.preconditioner))
-   f:write(string.format('"ilu_fill": %d,\n', nkConfig.ilu_fill))
-   f:write(string.format('"preconditioner_sub_iterations": %d,\n', nkConfig.preconditioner_sub_iterations))
-   -- output and diagnostics
-   f:write(string.format('"total_snapshots": %d,\n', nkConfig.total_snapshots))
-   f:write(string.format('"steps_between_snapshots": %d,\n', nkConfig.steps_between_snapshots))
-   f:write(string.format('"steps_between_diagnostics": %d,\n', nkConfig.steps_between_diagnostics))
-   f:write(string.format('"steps_between_loads_update": %d,\n', nkConfig.steps_between_loads_update))
-   -- write out phases
-   for i=1,#nkPhases do
-      f:write(nkPhases[i]:tojson() .. ",\n")
-   end
-   f:write('"dummy_entry_without_trailing_comma": 0\n') -- no comma on last entry
-   f:write('}\n')
-   f:close()
 end
 
 return {

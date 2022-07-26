@@ -134,17 +134,17 @@ public:
         }
 
         if (put_mass_in_last_position) {
-            xMom = 0;
-            yMom = 1;
+            xMom = 0; names ~= "x-mom";
+            yMom = 1; names ~= "y-mom";
             if (dimensions == 3) {
                 threeD = true;
-                zMom = 2;
-                totEnergy = 3;
+                zMom = 2; names ~= "z-mom";
+                totEnergy = 3; names ~= "tot-energy";
                 n = 4;
             } else {
                 // Do not carry z-momentum for 2D simulations.
                 threeD = false;
-                totEnergy = 2;
+                totEnergy = 2; names ~= "tot-energy";
                 n = 3;
             }
             n_turb = nturb;
@@ -152,42 +152,45 @@ public:
                 turb = true;
                 rhoturb = n; // Start of turbulence elements.
                 n += nturb;
+                foreach (i; 0 .. nturb) names ~= "turb-quant-" ~ to!string(i);
             } else {
                 turb = false;
             }
             this.MHD = MHD;
             if (MHD) {
-                xB = n;
-                yB = n+1;
-                zB = n+2;
-                psi = n+3;
-                divB = n+4;
+                xB = n; names ~= "x-B";
+                yB = n+1; names ~= "y-B";
+                zB = n+2; names ~= "z-B";
+                psi = n+3; names ~= "psi";
+                divB = n+4; names ~= "div-B";
                 n += 5;
             }
             n_species = nspecies;
             species = n; // Start of species elements.
             n += nspecies;
+            foreach (i; 0 .. nspecies) names ~= "species-" ~ to!string(i);
             n_modes = nmodes;
             if (nmodes > 0) {
                 modes = n; // Start of modes elements.
                 n += nmodes;
+                foreach (i; 0 .. nmodes) names ~= "mode-" ~ to!string(i);
             }
             // we still need the mass in the conserved quantities vector in some places of the code
-            mass = n;
+            mass = n; names ~= "mass";
             n += 1;
         } else { // fill out the array using our standard ordering
-            mass = 0;
-            xMom = 1;
-            yMom = 2;
+            mass = 0; names ~= "mass";
+            xMom = 1; names ~= "x-mom";
+            yMom = 2; names ~= "y-mom";
             if (dimensions == 3) {
                 threeD = true;
-                zMom = 3;
-                totEnergy = 4;
+                zMom = 3; names ~= "z-mom";
+                totEnergy = 4; names ~= "tot-energy";
                 n = 5;
             } else {
                 // Do not carry z-momentum for 2D simulations.
                 threeD = false;
-                totEnergy = 3;
+                totEnergy = 3; names ~= "tot-energy";
                 n = 4;
             }
             n_turb = nturb;
@@ -195,22 +198,24 @@ public:
                 turb = true;
                 rhoturb = n; // Start of turbulence elements.
                 n += nturb;
+                foreach (i; 0 .. nturb) names ~= "turb-quant-" ~ to!string(i);
             } else {
                 turb = false;
             }
             this.MHD = MHD;
             if (MHD) {
-                xB = n;
-                yB = n+1;
-                zB = n+2;
-                psi = n+3;
-                divB = n+4;
+                xB = n; names ~= "x-B";
+                yB = n+1; names ~= "y-B";
+                zB = n+2; names ~= "z-B";
+                psi = n+3; names ~= "psi";
+                divB = n+4; names ~= "div-B";
                 n += 5;
             }
             n_species = nspecies;
             if (nspecies > 1) {
                 species = n; // Start of species elements.
                 n += nspecies;
+                foreach (i; 0 .. nspecies) names ~= "species-" ~ to!string(i);
                 // Note that we only carry species in the conserved-quantities vector
                 // if we have a multi-species gas model.
                 // A single-species gas model assumes a species fraction on 1.0
@@ -220,6 +225,7 @@ public:
             if (nmodes > 0) {
                 modes = n; // Start of modes elements.
                 n += nmodes;
+                foreach (i; 0 .. nmodes) names ~= "mode-" ~ to!string(i);
             }
         }
     } // end constructor
@@ -246,6 +252,8 @@ public:
         divB = other.divB;
         species = other.species;
         modes = other.modes;
+        names.length = other.names.length;
+        names[] = other.names[];
     } // end copy constructor
 
     override string toString() const
@@ -260,4 +268,12 @@ public:
         repr ~= ")";
         return to!string(repr);
     }
+
+    string nameFromIndex(size_t i)
+    {
+        return names[i];
+    }
+
+private:
+    string[] names;
 } // end ConvservedQuantitiesIndices

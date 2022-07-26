@@ -84,7 +84,7 @@ public:
         Dinv = new Matrix!number(nConserved,nConserved);
     } // end size_local_matrix()
 
-    void augment_with_dt(FVCell[] cells, double dt, size_t ncells, size_t nConserved)
+    void augment_with_dt(FVCell[] cells, size_t nConserved)
     {
         /*
           This method augments the Jacobian by adding the inverse pseudo-time term in the form A = 1/dt - dR/dU
@@ -93,15 +93,10 @@ public:
 
         foreach ( ref entry; local.aa) { entry *= -1; }
         number dtInv;
-        foreach (i; 0..ncells) {
+        foreach (i, cell; cells) {
             foreach (j; 0..nConserved) {
-                if (GlobalConfig.with_local_time_stepping) {
-                    FVCell cell = cells[i];
-                    dtInv = 1.0/cell.dt_local;
-                } else {
-                    dtInv = 1.0/dt;
-                }
-                ulong idx = i*nConserved + j;
+                dtInv = 1.0/cell.dt_local;
+                size_t idx = i*nConserved + j;
                 local[idx,idx] = local[idx,idx] + dtInv;
             }
         }
