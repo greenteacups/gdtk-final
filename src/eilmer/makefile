@@ -710,7 +710,7 @@ e4-nk-shared: nk_accelerator.d nk_accel_core.d $(EILMER_FILES) \
 		-e 's/PUT_COMPILER_NAME_HERE/$(DMD)/' \
 		-e 's/PUT_BUILD_DATE_HERE/$(BUILD_DATE)/' \
 		nk_accelerator.d > nk_accelerator_with_string_subst.d
-	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ \
+	$(DMD) $(FLAVOUR_FLAGS) -wi $(DFLAGS) $(OF)$@ \
 		$(DVERSION)complex_numbers \
 		$(DVERSION)nk_accelerator \
 		$(DVERSION)steady_state \

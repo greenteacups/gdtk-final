@@ -37,8 +37,6 @@ function output.write_control_file(fileName)
    f:write(string.format('"number_total_snapshots": %d,\n', config.number_total_snapshots))
    f:write(string.format('"halt_now": %d\n', config.halt_now))
    -- Note, also, no comma on last entry in JSON object. (^^^: Look up one line and check!)
-   f:write('    }\n')
-   -- Note, also, no comma on last entry in JSON object. (^^^: Look up one line and check!)
    f:write("}\n")
    f:close()
 end
