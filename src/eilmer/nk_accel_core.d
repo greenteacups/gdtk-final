@@ -211,7 +211,7 @@ struct NKPhaseConfig {
     double linearSolveTolerance = 0.01;
     // Auto CFL control
     bool useAutoCFL = false;
-    double thresholdResidualDropForCFLGrowth = 0.99;
+    double thresholdRelativeResidualForCFLGrowth = 0.99;
     double startCFL = 1.0;
     double maxCFL = 1000.0;
     double autoCFLExponent = 0.75;
@@ -227,7 +227,7 @@ struct NKPhaseConfig {
         frozenLimiterForJacobian = getJSONbool(jsonData, "frozen_limiter_for_jacobian", frozenLimiterForJacobian);
         linearSolveTolerance = getJSONdouble(jsonData, "linear_solver_tolerance", linearSolveTolerance);
         useAutoCFL = getJSONbool(jsonData, "use_auto_cfl", useAutoCFL);
-        thresholdResidualDropForCFLGrowth = getJSONdouble(jsonData, "threshold_residual_drop_for_cfl_growth", thresholdResidualDropForCFLGrowth);
+        thresholdRelativeResidualForCFLGrowth = getJSONdouble(jsonData, "threshold_relative_residual_for_cfl_growth", thresholdRelativeResidualForCFLGrowth);
         startCFL = getJSONdouble(jsonData, "start_cfl", startCFL);
         maxCFL = getJSONdouble(jsonData, "max_cfl", maxCFL);
         autoCFLExponent = getJSONdouble(jsonData, "auto_cfl_exponent", autoCFLExponent);
@@ -249,7 +249,7 @@ NKPhaseConfig activePhase;
  * Date: 2022-03-08
  */
 interface CFLSelector {
-    @nogc double nextCFL(double cfl, int step, double currResidual, double prevResidual);
+    @nogc double nextCFL(double cfl, int step, double currResidual, double prevResidual, double relativeGlobalResidual);
 }
 
 /**
@@ -288,7 +288,7 @@ class LinearRampCFL : CFLSelector {
     }
 
     @nogc
-    override double nextCFL(double cfl, int step, double currResidual, double prevResidual)
+    override double nextCFL(double cfl, int step, double currResidual, double prevResidual, double relativeGlobalResidual)
     {
         if (step <= mStartStep) return mStartCFL;
         if (step >= mEndStep) return mEndCFL;
@@ -311,15 +311,20 @@ private:
  */
 
 class ResidualBasedAutoCFL : CFLSelector {
-    this(double p, double cfl_max)
+    this(double p, double cfl_max, double thresholdResidualDrop)
     {
         mP = p;
         mMaxCFL = cfl_max;
+        mThresholdResidualDrop = thresholdResidualDrop;
     }
 
     @nogc
-    override double nextCFL(double cfl, int step, double currResidual, double prevResidual)
+    override double nextCFL(double cfl, int step, double currResidual, double prevResidual, double relativeGlobalResidual)
     {
+        if (relativeGlobalResidual > mThresholdResidualDrop) {
+            // No adjustment required yet, return what we are given.
+            return cfl;
+        }
         auto residRatio = prevResidual/currResidual;
         double cflTrial = cfl*pow(residRatio, mP);
         // Apply some safeguards on the value.
@@ -334,6 +339,7 @@ private:
     immutable double mLimitOnCFLDecreaseRatio = 0.1;
     double mP;
     double mMaxCFL;
+    double mThresholdResidualDrop;
 }
 
 
@@ -399,7 +405,7 @@ struct GMRESInfo {
     int nRestarts;
     double initResidual;
     double finalResidual;
-    double iterationCount;
+    int iterationCount;
 };
 GMRESInfo gmresInfo;
 
@@ -425,7 +431,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
     }
 
     int nWrittenSnapshots;
-    int startStep = 0;
+    int startStep = 1;
     bool finalStep = false;
     double cfl;
     double dt;
@@ -456,10 +462,12 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
     }
     */
 
+    /*
     debug {
         writeln("DEBUG: performNewtoKrylovUpdate()");
         writeln("       Initialisation done.");
     }
+    */
     
     // Look for global CFL schedule and use to set CFL
     if (nkCfg.cflSchedule.length > 0) {
@@ -508,37 +516,39 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
             setPhaseSettings(finalPhase);
         }
         if (activePhase.useAutoCFL) {
-            cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL);
+            cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL, activePhase.thresholdRelativeResidualForCFLGrowth);
             cfl = restart.cfl;
         }
         else { // Assume we have a global (phase-independent) schedule
-            cfl = cflSelector.nextCFL(-1.0, startStep, -1.0, -1.0);
+            cfl = cflSelector.nextCFL(-1.0, startStep, -1.0, -1.0, -1.0);
         }
     }
     else {
         // On fresh start, the phase setting must be at 0
         setPhaseSettings(0);
         if (activePhase.useAutoCFL) {
-            cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL);
+            cflSelector = new ResidualBasedAutoCFL(activePhase.autoCFLExponent, activePhase.maxCFL, activePhase.thresholdRelativeResidualForCFLGrowth);
             cfl = activePhase.startCFL;
         }
         else { // Assume we have a global (phase-independent) schedule
-            cfl = cflSelector.nextCFL(-1.0, startStep, -1.0, -1.0);
+            cfl = cflSelector.nextCFL(-1.0, startStep, -1.0, -1.0, -1.0);
         }
     }
 
     // Start timer right at beginning of stepping.
     auto wallClockStart = Clock.currTime();
     double wallClockElapsed;
-int numberBadSteps = 0;
-bool startOfNewPhase = false;
+    int numberBadSteps = 0;
+    bool startOfNewPhase = false;
 
-    foreach (step; startStep .. nkCfg.maxNewtonSteps) {
+    foreach (step; startStep .. nkCfg.maxNewtonSteps+1) {
+        /*
         debug {
             writeln("DEBUG: performNewtoKrylovUpdate()");
             writefln("       STEP %2d ", step);
         }
-
+        */
+        
         /*---
          * 0. Check for any special actions based on step to perform at START of step
          *---
@@ -578,28 +588,34 @@ bool startOfNewPhase = false;
 
         // 0c. Set the timestep for this step
         dt = setDtInCells(cfl);
-        writeln("dt= ", dt);
 
         // 0d. determine if we need to update preconditioner
+
         if (step == startStep || startOfNewPhase || (step % activePhase.stepsBetweenPreconditionerUpdate) == 0) {
             updatePreconditionerThisStep = true;
         }
-        
+        else {
+            updatePreconditionerThisStep = false;
+        }
         /*---
          * 1. Perforn Newton update
          *---
          */
+        /*
         debug {
             writeln("DEBUG: performNewtoKrylovUpdate()");
             writefln("       about to solve for Newton step.", step);
         }
+        */
 
         globalResidual = solveNewtonStep(updatePreconditionerThisStep);
 
+        /*
         debug {
             writeln("DEBUG: performNewtoKrylovUpdate()");
             writefln("       Newton step done.", step);
         }
+        */
 
 
         double omega = nkCfg.usePhysicalityCheck ? determineRelaxationFactor() : 1.0;
@@ -622,7 +638,19 @@ bool startOfNewPhase = false;
                     exit(1);
                 }
             }
-            cfl = cflSelector.nextCFL(cfl, step, globalResidual, prevGlobalResidual);
+            // Since things are good, we can select a new CFL
+            if (activePhase.useAutoCFL) {
+                // We need to be careful in the early steps with the auto CFL.
+                // On step 1, we have no previous residual, so we can't make an adjustment.
+                // Also, we need to check on a residual drop, but this makes no sense
+                // until the reference residuals are established.
+                if (step > startStep && step > nkCfg.numberOfStepsForSettingReferenceResiduals) {
+                    cfl = cflSelector.nextCFL(cfl, step, globalResidual, prevGlobalResidual, globalResidual/referenceGlobalResidual);
+                }
+            }
+            else {
+                cfl = cflSelector.nextCFL(-1.0, step, -1.0, -1.0, -1.0);
+            }
             numberBadSteps = 0;
         }
         else if (omega < nkCfg.minRelaxationFactor && activePhase.useAutoCFL) {
@@ -665,6 +693,13 @@ bool startOfNewPhase = false;
          *---
          * Here we need to do some house-keeping and see if we continue with iterations.
          */
+        /*
+        debug {
+            writeln("DEBUG: performNewtoKrylovUpdate()");
+            writefln("       post-update actions on step=  %d", step);
+        }
+        */
+        
         /*----
          * 2a. Search for reference residuals if needed
          *----
@@ -678,13 +713,20 @@ bool startOfNewPhase = false;
             foreach (ivar; 0 .. nConserved) {
                 referenceResiduals.vec[ivar] = fmax(referenceResiduals.vec[ivar], currentResiduals.vec[ivar]);
             }
-            if (step == nkCfg.numberOfStepsForSettingReferenceResiduals-1) {
+            if (step == nkCfg.numberOfStepsForSettingReferenceResiduals) {
                 referenceResidualsAreSet = true;
                 if (GlobalConfig.is_master_task) {
                     writeln("*************************************************************************");
-                    writefln("  After first %d steps, reference residuals have been set.", nkCfg.numberOfStepsForSettingReferenceResiduals);
-                    writefln("  Reference global residual: %.12e\n", referenceGlobalResidual);
-                    writeln("*************************************************************************");
+                    writeln("*");
+                    writefln("*  After first %d steps, reference residuals have been set.", nkCfg.numberOfStepsForSettingReferenceResiduals);
+                    writefln("*  Reference global residual: %.12e\n", referenceGlobalResidual);
+                    writeln("*");
+                    writeln("*  Reference residuals for each conservation equation:");
+                    foreach (ivar; 0 .. nConserved) {
+                        writefln("* %12s: %.12e", cfg.cqi.nameFromIndex(ivar), referenceResiduals.vec[ivar].re);
+                    }
+                    writeln("*");
+                    writeln("*************************************************************************\n");
                 }
             }
         }
@@ -1068,53 +1110,60 @@ foreach (blk; localFluidBlocks) `~norm2~` += blk.normAcc;
  */
 double solveNewtonStep(bool updatePreconditionerThisStep)
 {
+    /*
     debug {
         writeln("DEBUG: solveNewtonStep()");
         writeln(" entered function.");
     }
+    */
             
     alias cfg = GlobalConfig;
+    size_t nConserved = cfg.cqi.n;
 
     bool isConverged = false;
     /*---
      * 0. Preparation for iterations.
      *---
      */
+    /*
     debug {
         writeln("DEBUG: solveNewtonStep()");
         writeln(" calling evalResidual.");
     }
-    
+    */
+
     evalResidual(0);
 
-    writeln("cell-0-dUdt= ", localFluidBlocks[0].cells[0].dUdt[0]);
-
+    /*
     debug {
         writeln("DEBUG: solveNewtonStep()");
         writeln(" evalResidual done.");
     }
+    */
     
     setResiduals();
 
+    /*
     debug {
         writeln("DEBUG: solveNewtonStep()");
         writeln(" calling computeGlobalResidual.");
     }
+    */
     
     double globalResidual = computeGlobalResidual();
 
+    /*
     debug {
         writeln("DEBUG: solveNewtonStep()");
         writeln(" computeGlobalResidual done.");
     }
+    */
 
     
     determineScaleFactors(scale);
     // r0 = A*x0 - b
     compute_r0(scale);
 
-    writeln("r0[0]= ", localFluidBlocks[0].r0[0 .. 10]);
-    
     // beta = ||r0||
     number beta = computeLinearSystemResidual();
     number beta0 = beta; // Store a copy as initial residual
@@ -1123,9 +1172,6 @@ double solveNewtonStep(bool updatePreconditionerThisStep)
     // v = r0/beta
     prepareKrylovSpace(beta);
 
-    writeln("v[0]= ", localFluidBlocks[0].v[0 .. 10]);
-
-    
     auto targetResidual = activePhase.linearSolveTolerance * beta;
     if (nkCfg.usePreconditioner && updatePreconditionerThisStep) {
         computePreconditioner();
@@ -1136,7 +1182,6 @@ double solveNewtonStep(bool updatePreconditionerThisStep)
      *---
      */
 
-    
     size_t r_break;
     int maxIterations = nkCfg.maxLinearSolverIterations;
     // We add one here because input is to do with number of *restarts*.
@@ -1144,10 +1189,12 @@ double solveNewtonStep(bool updatePreconditionerThisStep)
     int nAttempts = nkCfg.maxLinearSolverRestarts + 1;
     int iterationCount;
 
+    /*
     debug {
         writeln("DEBUG: solveNewtonStep()");
         writeln(" starting restarted GMRES iterations.");
     }
+    */
 
 
     foreach (r; 0 .. nAttempts) {
@@ -1160,19 +1207,22 @@ double solveNewtonStep(bool updatePreconditionerThisStep)
         g0[0] = beta;
 
         // Delegate inner iterations
+        /*
         debug {
             writeln("DEBUG: solveNewtonStep()");
             writeln(" calling performIterations.");
         }
-
+        */
+        
         isConverged = performIterations(maxIterations, beta0, targetResidual, scale, iterationCount);
         int m = iterationCount;
 
+        /*
         debug {
             writeln("DEBUG: solveNewtonStep()");
             writeln(" done performIterations.");
         }
-
+        */
         
         // At end H := R up to row m
         //        g := gm up to row m
@@ -1181,10 +1231,8 @@ double solveNewtonStep(bool updatePreconditionerThisStep)
         foreach (blk; localFluidBlocks) blk.g1[] = g1[];
         foreach (blk; parallel(localFluidBlocks,1)) {
             nm.bbla.dot!number(blk.V, blk.nvars, m, blk.g1, blk.zed);
+            unscaleVector(blk.zed, nConserved);
         }
-
-        // unscale 'z'
-        //unscaleVector("zed");
 
         // Prepare dU values (for Newton update)
         if (nkCfg.usePreconditioner) {
@@ -1242,11 +1290,12 @@ double solveNewtonStep(bool updatePreconditionerThisStep)
         }
     }
 
+    /*
     debug {
         writeln("DEBUG: solveNewtonStep()");
         writeln(" done restarted GMRES iterations.");
     }
-
+    */
     
     // Set some information before leaving. This might be used in diagnostics file.
     gmresInfo.nRestarts = to!int(r_break);
@@ -1314,19 +1363,15 @@ void determineScaleFactors(ref ConservedQuantities scale)
         }
     }
 
-    writeln("maxRates= ", scale.vec);
-    
     // Use a guard on scale values if they get small
     foreach (ivar; 0 .. nConserved) {
         scale.vec[ivar] = fmax(scale.vec[ivar], minScaleFactor);
     }
-    writeln("after guards= ", scale.vec);
     
     // Value is presently maxRate. Store as scale = 1/maxRate.
     foreach (ivar; 0 .. nConserved) {
         scale.vec[ivar] = 1./scale.vec[ivar];
     }
-    writeln("after inverse= ", scale.vec);
     
 }
 
@@ -1367,7 +1412,6 @@ double computeGlobalResidual()
  */
 void compute_r0(ConservedQuantities scale)
 {
-    writeln("scale-vec= ", scale.vec);
     size_t nConserved = GlobalConfig.cqi.n;
     foreach (blk; parallel(localFluidBlocks,1)) {
         blk.x0[] = to!number(0.0);
@@ -1421,7 +1465,6 @@ void prepareKrylovSpace(number beta)
  */
 void computePreconditioner()
 {
-    writeln("Compute preconditioner....");
     size_t nConserved = GlobalConfig.cqi.n;
     
     final switch (nkCfg.preconditioner) {
@@ -1442,11 +1485,8 @@ void computePreconditioner()
     case PreconditionerType.ilu:
         foreach (blk; parallel(localFluidBlocks,1)) {
             blk.evaluate_jacobian();
-            writeln("local[0 .. 10]= ", blk.flowJacobian.local.aa[0 .. 10]);
             blk.flowJacobian.augment_with_dt(blk.cells, nConserved);
-            writeln("local[0 .. 10]= ", blk.flowJacobian.local.aa[0 .. 10]);
             nm.smla.decompILU0(blk.flowJacobian.local);
-            writeln("local[0 .. 10]= ", blk.flowJacobian.local.aa[0 .. 10]);
         }
         break;
     }
@@ -1486,47 +1526,50 @@ bool performIterations(int maxIterations, number beta0, number targetResidual,
                        ref ConservedQuantities scale, ref int iterationCount)
 {
 
+    /*
     debug {
         writeln("DEBUG: performIterations()");
         writeln(" entered function.");
     }
+    */
     
     alias cfg = GlobalConfig;
 
     bool isConverged = false;
     size_t nConserved = cfg.cqi.n;
 
+    /*
     debug {
         writeln("DEBUG: performIterations()");
         writeln(" starting Krylov iterations.");
     }
+    */
         
     foreach (j; 0 .. maxIterations) {
         iterationCount = j+1;
 
+        /*
         debug {
             writeln("DEBUG: performIterations()");
             writeln(" scaling vector.");
         }
+        */
 
         
         // 1. Unscale v
         // v is scaled earlier when r0 copied in.
         // However, to compute Jv via Frechet, we will need
         // unscaled values.
-        writeln("outside loop: scale.vec= ", scale.vec);
         foreach (blk; parallel(localFluidBlocks,1)) {
             unscaleVector(blk.v, nConserved);
         }
 
-        writeln("v[0]= ", localFluidBlocks[0].v[0 .. 10]);
-        
-        
+        /*
         debug {
             writeln("DEBUG: performIterations()");
             writeln(" apply preconditioning.");
         }
-
+        */
         
         // 2. Apply preconditioning (if requested)
         if (nkCfg.usePreconditioner) {
@@ -1538,14 +1581,12 @@ bool performIterations(int maxIterations, number beta0, number targetResidual,
             }
         }
 
-        writeln("zed[0 .. 0]= ", localFluidBlocks[0].zed[0 .. 10]);
-        exit(1);
-        
+        /*
         debug {
             writeln("DEBUG: performIterations()");
             writeln(" include 1/dt term.");
         }
-
+        */
         
         // 3. Jacobian-vector product
         // 3a. Prepare w vector with 1/dt term.
@@ -1558,6 +1599,7 @@ bool performIterations(int maxIterations, number beta0, number targetResidual,
                 startIdx += nConserved;
             }
         }
+
         // 3b. Determine perturbation size, sigma
         // Kyle's experiments show one needs to recompute on every step
         // if using the method to estimate a perturbation size based on
@@ -1574,12 +1616,13 @@ bool performIterations(int maxIterations, number beta0, number targetResidual,
             sigma =  (nkCfg.frechetDerivativePerturbation < 0.0) ? computePerturbationSize() : nkCfg.frechetDerivativePerturbation;
         }
 
+        /*
         debug {
             writeln("DEBUG: performIterations()");
             writeln(" Jz calc.");
         }
+        */
 
-        
         // 3b. Evaluate Jz and place result in z
         evalJacobianVectorProduct(sigma);
 
@@ -1589,10 +1632,12 @@ bool performIterations(int maxIterations, number beta0, number targetResidual,
             scaleVector(blk.w, nConserved);
         }
 
+        /*
         debug {
             writeln("DEBUG: performIterations()");
             writeln(" remainder of GMRES.");
         }
+        */
 
         
         // 4. The remainder of the algorithm looks a lot like any standard
@@ -1670,11 +1715,13 @@ bool performIterations(int maxIterations, number beta0, number targetResidual,
         }
     }
 
+    /*
     debug {
         writeln("DEBUG: performIterations()");
         writeln(" done Krylov iterations.");
     }
-
+    */
+    
     
     return isConverged;
 }
@@ -1712,10 +1759,7 @@ void applyPreconditioning()
     case PreconditionerType.ilu:
         foreach (blk; parallel(localFluidBlocks,1)) {
             blk.zed[] = blk.v[];
-            writeln("blk.zed[0 .. 10]= ", blk.zed[0 .. 10]);
-            writeln("local[0 .. 10]= ", blk.flowJacobian.local.aa[0 .. 10]);
             nm.smla.solve(blk.flowJacobian.local, blk.zed);
-            writeln("blk.zed[0 .. 10]= ", blk.zed[0 .. 10]);
         }
         break;
     } // end switch
@@ -1967,8 +2011,8 @@ void evalComplexMatVecProd(double sigma)
         // Make a stack-local copy of conserved quantities info
         size_t nConserved = GlobalConfig.cqi.n;
 
-        writeln("in evalComplexMatVecProd");
-        writefln("sigma= %e", sigma);
+        //writeln("in evalComplexMatVecProd");
+        //writefln("sigma= %e", sigma);
         // We perform a Frechet derivative to evaluate J*D^(-1)v
         foreach (blk; parallel(localFluidBlocks,1)) {
             blk.clear_fluxes_of_conserved_quantities();
@@ -1978,11 +2022,7 @@ void evalComplexMatVecProd(double sigma)
                 cell.U[1].copy_values_from(cell.U[0]);
                 foreach (ivar; 0 .. nConserved) {
                     cell.U[1].vec[ivar] += complex(0.0, sigma * blk.zed[startIdx+ivar].re);
-                    writefln("ivar= %d, z= %e", ivar, blk.zed[startIdx+ivar].re);
                 }
-                writefln("i= %d", i);
-                writeln("U[0]: ", cell.U[0]);
-                writeln("U[1]: ", cell.U[1]);
                 cell.decode_conserved(0, 1, 0.0);
                 startIdx += nConserved;
             }
@@ -2257,7 +2297,7 @@ void writeDiagnostics(int step, double cfl, double dt, double wallClockElapsed, 
     
     auto fname = diagnosticsDir ~ "/" ~ diagnosticsFilename;
     diagnostics = File(fname, "a");
-    diagnostics.writef("%8d %20.16e %20.16e %20.16e %2d %3d %8d %.8f %20.16e %20.16e %20.16e %20.16e ",
+    diagnostics.writef("%8d %20.16e %20.16e %20.16e %.8f %2d %3d %8d %20.16e %20.16e %20.16e %20.16e ",
                        step, dt, cfl, activePhase.linearSolveTolerance, wallClockElapsed, 
                        gmresInfo.nRestarts, gmresInfo.iterationCount, fnCount,
                        globalResidual, globalResidual/referenceGlobalResidual,
@@ -2289,10 +2329,10 @@ void printStatusToScreen(int step, double cfl, double dt, double wallClockElapse
     formattedWrite(writer, "step= %6d\tcfl=%10.3e\tdt=%10.3e\tWC=%.1f\n",
                    step, cfl, dt, wallClockElapsed);
     formattedWrite(writer, hrule);
-    formattedWrite(writer, "residuals\t\trelative\t\tabsolute\n");
-    formattedWrite(writer, "global\t\t%10.6e\t\t%10.6e", globalResidual.re/referenceGlobalResidual.re, globalResidual.re);
+    formattedWrite(writer, "%12s\t\tRELATIVE\t\tABSOLUTE\n", "RESIDUALS");
+    formattedWrite(writer, "%12s\t\t%10.6e\t\t%10.6e\n", "global", globalResidual.re/referenceGlobalResidual.re, globalResidual.re);
     foreach (ivar; 0 .. cqi.n) {
-        formattedWrite(writer, "%s\t\t%10.6e\t\t%10.6e", cqi.nameFromIndex(ivar), currentResiduals.vec[ivar].re/referenceResiduals.vec[ivar].re, currentResiduals.vec[ivar].re);
+        formattedWrite(writer, "%12s\t\t%10.6e\t\t%10.6e\n", cqi.nameFromIndex(ivar), currentResiduals.vec[ivar].re/referenceResiduals.vec[ivar].re, currentResiduals.vec[ivar].re);
     }        
     writeln(writer.data);
 }

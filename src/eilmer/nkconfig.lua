@@ -157,7 +157,7 @@ NewtonKrylovPhaseDefaults = {
    
    -- Auto CFL control
    use_auto_cfl = false,
-   threshold_residual_drop_for_cfl_growth = 0.99,
+   threshold_relative_residual_for_cfl_growth = 0.99,
    start_cfl = 1.0,
    max_cfl = 1000.0,
    auto_cfl_exponent = 0.75,
@@ -216,7 +216,7 @@ function NewtonKrylovPhase:tojson()
    str = str .. string.format('    "linear_solve_tolerance": %.18e,\n', self.linear_solve_tolerance)
    str = str .. string.format('    "use_auto_cfl": %s,\n', tostring(self.use_auto_cfl))
    if self.use_auto_cfl then
-      str = str .. string.format('    "threshold_residual_drop_for_cfl_growth": %.18e,\n', self.threshold_residual_drop_for_cfl_growth)
+      str = str .. string.format('    "threshold_relative_residual_for_cfl_growth": %.18e,\n', self.threshold_relative_residual_for_cfl_growth)
       str = str .. string.format('    "start_cfl": %.18e,\n', self.start_cfl)
       str = str .. string.format('    "max_cfl": %.18e,\n', self.max_cfl)
       str = str .. string.format('    "auto_cfl_exponent": %.18e,\n', self.auto_cfl_exponent)
