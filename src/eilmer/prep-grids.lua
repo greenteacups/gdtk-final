@@ -9,6 +9,12 @@ if false then -- debug
    print("Begin loading prep-grids.lua.")
 end
 
+-- control access to this variable via a function
+local STEADY_STATE_MODE = false
+function steadyStateModeOn()
+   STEADY_STATE_MODE = true
+end
+
 require 'lua_helper'
 require 'blk_conn'
 
@@ -84,7 +90,12 @@ function writeGridFiles(jobName)
    print(string.format('Write grid files for job="%s"', jobName))
    --
    os.execute("mkdir -p grid")
-   local fileName = "grid/" .. jobName .. ".grid-metadata"
+   local fileName
+   if not STEADY_STATE_MODE then
+      fileName = "grid/" .. jobName .. ".grid-metadata"
+   else
+      fileName = "grid/metadata"
+   end
    local f = assert(io.open(fileName, "w"))
    f:write('{\n')
    f:write(string.format('  "ngrids": %d,\n', #gridsList))
@@ -108,13 +119,21 @@ function writeGridFiles(jobName)
    f:close()
    print(string.format("  #connections: %d", #connectionList))
    --
-   os.execute("mkdir -p grid/t0000")
+   if not STEADY_STATE_MODE then
+      os.execute("mkdir -p grid/t0000")
+   else
+      os.execute("mkdir -p grid/snapshot-00")
+   end
    for i, g in ipairs(gridsList) do
       if false then -- May activate print statement for debug.
          print("grid id=", g.id)
       end
       -- Write the grid proper.
-      local fileName = "grid/t0000/" .. jobName .. string.format(".grid.b%04d.t0000", g.id)
+      if not STEADY_STATE_MODE then
+         fileName = "grid/t0000/" .. jobName .. string.format(".grid.b%04d.t0000", g.id)
+      else
+         fileName = "grid/snapshot-00/" .. string.format("b%04d", g.id)
+      end
       if config.grid_format == "gziptext" then
 	 g.grid:write_to_gzip_file(fileName .. ".gz")
       elseif config.grid_format == "rawbinary" then
@@ -123,7 +142,11 @@ function writeGridFiles(jobName)
 	 error(string.format("Oops, invalid grid_format: %s", config.grid_format))
       end
       -- Write the grid metadata.
-      local fileName = "grid/" .. jobName .. string.format(".grid.b%04d.metadata", g.id)
+      if not STEADY_STATE_MODE then
+         fileName = "grid/" .. jobName .. string.format(".grid.b%04d.metadata", g.id)
+      else
+         fileName = "grid/" .. string.format("b%04d.metadata", g.id)
+      end
       local f = assert(io.open(fileName, "w"))
       f:write(g:tojson() .. '\n')
       f:close()
