@@ -59,6 +59,7 @@ MPICH_FILES := $(MPICH_DIR)/mpi.d
 
 PROGRAMS := e4shared e4monitor gdtk-module
 SHARE_FILES :=
+ETC_FILES := lmr.cfg
 
 ifeq ($(WITH_COMPLEX_NUMBERS),1)
     PROGRAMS += e4zshared
@@ -441,6 +442,7 @@ install: $(PROGRAMS) $(LUA_MODULES) prep.lua prep-grids.lua prep-flow.lua post.l
 	- mkdir -p $(BUILD_DIR)/bin
 	- mkdir -p $(BUILD_DIR)/lib
 	- mkdir -p $(BUILD_DIR)/share
+	- mkdir -p $(BUILD_DIR)/etc
 	cp $(PROGRAMS) $(BUILD_DIR)/bin
 	cp $(LUA_DIR)/install/bin/* $(BUILD_DIR)/bin
 	cp $(LUA_DIR)/install/lib/lpeg.so $(BUILD_DIR)/lib
@@ -469,6 +471,7 @@ install: $(PROGRAMS) $(LUA_MODULES) prep.lua prep-grids.lua prep-flow.lua post.l
 ifneq "$(SHARE_FILES)" ""
 	cp $(SHARE_FILES) $(BUILD_DIR)/share
 endif
+	cp $(ETC_FILES) $(BUILD_DIR)/etc
 	@echo "Installing to $(INSTALL_DIR)"
 	cp -r $(BUILD_DIR)/* $(INSTALL_DIR)
 

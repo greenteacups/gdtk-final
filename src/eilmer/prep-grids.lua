@@ -9,14 +9,19 @@ if false then -- debug
    print("Begin loading prep-grids.lua.")
 end
 
--- control access to this variable via a function
-local STEADY_STATE_MODE = false
-function steadyStateModeOn()
-   STEADY_STATE_MODE = true
-end
-
 require 'lua_helper'
 require 'blk_conn'
+
+-- Extract grid directory and names from central config.
+local json = require 'json'
+local lmrcfg = os.getenv("DGD") .. "/etc/lmr.cfg"
+local f = assert(io.open(lmrcfg, "r"))
+local jsonStr = f:read("*a")
+f:close()
+local jsonData = json.parse(jsonStr)
+local gridDir = jsonData["grid-directory"]
+local gridMD = jsonData["grid-metadata-name"]
+local gridBlkName = jsonData["grid-block-name"]
 
 local configoptions = require 'configoptions'
 config = configoptions.config
@@ -89,13 +94,8 @@ end -- registerGridArray
 function writeGridFiles(jobName)
    print(string.format('Write grid files for job="%s"', jobName))
    --
-   os.execute("mkdir -p grid")
-   local fileName
-   if not STEADY_STATE_MODE then
-      fileName = "grid/" .. jobName .. ".grid-metadata"
-   else
-      fileName = "grid/metadata"
-   end
+   os.execute("mkdir -p " .. gridDir)
+   local fileName = gridDir .. "/" .. gridMD
    local f = assert(io.open(fileName, "w"))
    f:write('{\n')
    f:write(string.format('  "ngrids": %d,\n', #gridsList))
@@ -119,21 +119,12 @@ function writeGridFiles(jobName)
    f:close()
    print(string.format("  #connections: %d", #connectionList))
    --
-   if not STEADY_STATE_MODE then
-      os.execute("mkdir -p grid/t0000")
-   else
-      os.execute("mkdir -p grid/snapshot-00")
-   end
    for i, g in ipairs(gridsList) do
       if false then -- May activate print statement for debug.
          print("grid id=", g.id)
       end
       -- Write the grid proper.
-      if not STEADY_STATE_MODE then
-         fileName = "grid/t0000/" .. jobName .. string.format(".grid.b%04d.t0000", g.id)
-      else
-         fileName = "grid/snapshot-00/" .. string.format("b%04d", g.id)
-      end
+      fileName = gridDir .. "/" .. string.format(gridBlkName, g.id)
       if config.grid_format == "gziptext" then
 	 g.grid:write_to_gzip_file(fileName .. ".gz")
       elseif config.grid_format == "rawbinary" then
@@ -142,11 +133,7 @@ function writeGridFiles(jobName)
 	 error(string.format("Oops, invalid grid_format: %s", config.grid_format))
       end
       -- Write the grid metadata.
-      if not STEADY_STATE_MODE then
-         fileName = "grid/" .. jobName .. string.format(".grid.b%04d.metadata", g.id)
-      else
-         fileName = "grid/" .. string.format("b%04d.metadata", g.id)
-      end
+      fileName = gridDir .. "/" .. string.format(gridBlkName, g.id) .. "." .. gridMD
       local f = assert(io.open(fileName, "w"))
       f:write(g:tojson() .. '\n')
       f:close()
