@@ -204,6 +204,7 @@ LUA_MODULES := configoptions.lua \
 	flowstate.lua \
 	fluidblock.lua \
 	fbarray.lua \
+	lmr_config.lua \
 	solidblock.lua \
 	mpi.lua \
 	history.lua \

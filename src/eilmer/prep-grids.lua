@@ -13,15 +13,11 @@ require 'lua_helper'
 require 'blk_conn'
 
 -- Extract grid directory and names from central config.
-local json = require 'json'
-local lmrcfg = os.getenv("DGD") .. "/etc/lmr.cfg"
-local f = assert(io.open(lmrcfg, "r"))
-local jsonStr = f:read("*a")
-f:close()
-local jsonData = json.parse(jsonStr)
-local gridDir = jsonData["grid-directory"]
-local gridMD = jsonData["grid-metadata-name"]
-local gridBlkName = jsonData["grid-block-name"]
+local lmr_config = require 'lmr_config'
+local lmrCfg = lmr_config.lmrConfigAsTable()
+local gridDir = lmrCfg["grid-directory"]
+local gridMD = lmrCfg["grid-metadata-name"]
+local gridBlkName = lmrCfg["grid-block-name"]
 
 local configoptions = require 'configoptions'
 config = configoptions.config
