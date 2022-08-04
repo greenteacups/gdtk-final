@@ -436,7 +436,7 @@ default: $(PROGRAMS) ugrid_partition gdtk-module
 	@echo "Source code revision string $(REVISION_STRING)"
 	@echo "Eilmer4 simulation code built."
 
-install: $(PROGRAMS) $(LUA_MODULES) prep.lua prep-grids.lua prep-flow.lua post.lua \
+install: $(PROGRAMS) $(LUA_MODULES) prep.lua prep-grids.lua prep-flow.lua prep-steady.lua post.lua \
 		prep-gas prep-chem chemkin2eilmer prep-kinetics \
 		$(SHARE_FILES) ugrid_partition
 	- mkdir -p $(INSTALL_DIR)
@@ -450,6 +450,7 @@ install: $(PROGRAMS) $(LUA_MODULES) prep.lua prep-grids.lua prep-flow.lua post.l
 	cp prep.lua $(BUILD_DIR)/bin
 	cp prep-grids.lua $(BUILD_DIR)/bin
 	cp prep-flow.lua $(BUILD_DIR)/bin
+	cp prep-steady.lua $(BUILD_DIR)/bin
 	cp post.lua $(BUILD_DIR)/bin
 	cp $(LUA_MODULES) $(BUILD_DIR)/lib
 	cp -r $(LUNAJSON)/src/* $(BUILD_DIR)/lib

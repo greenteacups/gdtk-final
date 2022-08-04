@@ -117,6 +117,7 @@ Argument:                            Comment:
   Staged preparation of grid, followed by flow, files.
   --prep-grid                        uses <job>-grid.lua to prepare grid files only
   --prep-flow                        uses <job>-flow.lua to prepare config & flow files
+  --prep-steady                      uses <job>-flow.lua to prepare config & flow files for NK solver
 
   Running the main simulation.
   --run                              run the simulation over time
@@ -187,6 +188,7 @@ longUsageMsg ~= to!string(totalCPUs) ~" on this machine
     bool prepFlag = false;
     bool prepGridFilesFlag = false;
     bool prepFlowFilesFlag = false;
+    bool prepSteadyFilesFlag = false;
     bool noConfigFilesFlag = false;
     bool noBlockFilesFlag = false;
     string blocksForPrep = "";
@@ -233,6 +235,7 @@ longUsageMsg ~= to!string(totalCPUs) ~" on this machine
                "prep-grid", &prepGridFilesFlag,
                "prep-grids", &prepGridFilesFlag,
                "prep-flow", &prepFlowFilesFlag,
+               "prep-steady", &prepSteadyFilesFlag,
                "no-config-files", &noConfigFilesFlag,
                "no-block-files", &noBlockFilesFlag,
                "only-blocks", &blocksForPrep,
@@ -688,6 +691,125 @@ longUsageMsg ~= to!string(totalCPUs) ~" on this machine
         return exitFlag;
     } // end if prepFlowFilesFlag
 
+    if (prepSteadyFilesFlag) {
+        version(mpi_parallel) {
+            if (GlobalConfig.is_master_task) {
+                writeln("Do not prepare config and flow files using MPI.");
+                stdout.flush();
+            }
+            exitFlag = 1;
+        } else { // NOT mpi_parallel
+            if (verbosityLevel > 0) { writeln("Begin preparation of flow and config files."); }
+            if (jobName.length == 0) {
+                writeln("Need to specify a job name.");
+                writeln(briefUsageMsg);
+                exitFlag = 1;
+                return exitFlag;
+            }
+            if (verbosityLevel > 1) { writeln("Start lua connection."); }
+            auto L = luaL_newstate();
+            luaL_openlibs(L);
+            lua_pushglobaltable(L);
+            registerVector3(L);
+            registerGlobalConfig(L);
+            registerFlowSolution(L);
+            registerFlowState(L);
+            registerPaths(L);
+            registerGpathUtils(L);
+            registerSurfaces(L);
+            registerVolumes(L);
+            registerUnivariateFunctions(L);
+            registerStructuredGrid(L);
+            registerUnstructuredGrid(L);
+            registerSketch(L);
+            registerSolidProps(L);
+            registerGasModel(L);
+            registeridealgasflowFunctions(L);
+            registergasflowFunctions(L);
+            registerBBLA(L);
+            // Determine which fluidBlocks we need to process.
+            int[] blockIdList;
+            blocksForPrep = blocksForPrep.strip();
+            foreach (blkStr; blocksForPrep.split(",")) {
+                blkStr = blkStr.strip();
+                auto blkRange = blkStr.split("..<");
+                if (blkRange.length == 1) {
+                    blockIdList ~= to!int(blkRange[0]);
+                }
+                else if (blkRange.length == 2) {
+                    auto start = to!int(blkRange[0]);
+                    auto end = to!int(blkRange[1]);
+                    if (end < start) {
+                        writeln("Supplied block list is in error. Range given is not allowed.");
+                        writeln("Bad supplied range is: ", blkStr);
+                        exitFlag = 1;
+                        return exitFlag;
+                    }
+                    foreach (i; start .. end) {
+                        blockIdList ~= i;
+                    }
+                }
+                else {
+                    writeln("Supplied block list is in error. Range given is not allowed.");
+                    writeln("Bad supplied range is: ", blkStr);
+                    exitFlag = 1;
+                    return exitFlag;
+                }
+            }
+            // Let's sort blocks in ascending order
+            blockIdList.sort();
+            lua_newtable(L);
+            lua_setglobal(L, "fluidBlockIdsForPrep");
+            lua_getglobal(L, "fluidBlockIdsForPrep");
+            // Use uniq so that we remove any duplicates the user might have supplied
+            import std.range;
+            foreach (i, blkId; blockIdList.uniq().enumerate(1)) {
+                lua_pushinteger(L, blkId);
+                lua_rawseti(L, -2, to!int(i));
+            }
+            lua_pop(L, 1);
+            // Now that we have set the Lua interpreter context,
+            // process the Lua scripts.
+            if (luaL_dofile(L, toStringz(dirName(thisExePath())~"/prep-steady.lua")) != 0) {
+                writeln("There was a problem in the Eilmer Lua code: prep-steady.lua");
+                string errMsg = to!string(lua_tostring(L, -1));
+                throw new FlowSolverException(errMsg);
+            }
+            if (luaL_dostring(L, toStringz("readGridMetadata()")) != 0) {
+                writeln("There was a problem in the Eilmer build function readGridMetadata() in prep-steady.lua");
+                string errMsg = to!string(lua_tostring(L, -1));
+                throw new FlowSolverException(errMsg);
+            }
+            // We are ready for the user's input script.
+            if (luaL_dofile(L, toStringz(jobName~"-flow.lua")) != 0) {
+                writeln("There was a problem in the user-supplied input lua script: ", jobName~"-flow.lua");
+                string errMsg = to!string(lua_tostring(L, -1));
+                throw new FlowSolverException(errMsg);
+            }
+            if (!noConfigFilesFlag) {
+                if (luaL_dostring(L, toStringz("buildRuntimeConfigFiles()")) != 0) {
+                    writeln("There was a problem in the Eilmer build function buildRuntimeConfigFiles() in prep-steady.lua");
+                    string errMsg = to!string(lua_tostring(L, -1));
+                    throw new FlowSolverException(errMsg);
+                }
+            }
+            JSONValue jsonData = readJSONfile("config/config");
+            set_config_for_core(jsonData);
+            // We may not proceed to building of block files if the config parameters are incompatible.
+            checkGlobalConfig();
+            if (!noBlockFilesFlag) {
+                if (luaL_dostring(L, toStringz("buildFlowFiles()")) != 0) {
+                    writeln("There was a problem in the Eilmer build function buildFlowFiles() in prep-steady.lua");
+                    string errMsg = to!string(lua_tostring(L, -1));
+                    throw new FlowSolverException(errMsg);
+                }
+            }
+            if (verbosityLevel > 0) { writeln("Done."); }
+        } // end NOT mpi_parallel
+        return exitFlag;
+    } // end if prepSteadyFilesFlag
+
+    
     if (runFlag) {
         if (jobName.length == 0) {
             writeln("Need to specify a job name.");
