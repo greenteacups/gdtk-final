@@ -37,7 +37,7 @@ import nm.bbla;
 import nm.complex;
 import nm.number;
 
-import nk_accel_core : performNewtonKrylovUpdates; 
+import nk_accel_core : initNewtonKrylovSimulation, performNewtonKrylovUpdates;
 import special_block_init;
 import fluidblock;
 import fluidblockio_old;
@@ -219,12 +219,13 @@ int main(string[] args)
     }
 
     if (GlobalConfig.is_master_task) { writefln("Initialising simulation from snapshot: %d", snapshotStart); }
-    init_simulation(snapshotStart, -1, maxCPUs, threadsPerMPITask, maxWallClock);
+    initNewtonKrylovSimulation(snapshotStart, maxCPUs, threadsPerMPITask, maxWallClock);
 
     // Additional memory allocation specific to the NK updates is performed
     // at start-up in next function call.
     performNewtonKrylovUpdates(snapshotStart, maxCPUs, threadsPerMPITask);
 
+    /+ [TODO] Fix up writing residuals to disk.
     /* Write residuals to file before exit. */
     if (GlobalConfig.is_master_task) {
         ensure_directory_is_present("residuals");
@@ -236,6 +237,7 @@ int main(string[] args)
         auto fileName = format!"residuals/%s.residuals.b%04d.gz"(jobName, blk.id);
         blk.write_residuals(fileName);
     }
+    +/
 
     if (GlobalConfig.is_master_task) {
         writeln("Done simulation.");

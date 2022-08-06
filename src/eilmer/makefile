@@ -135,7 +135,7 @@ ifeq ($(WITH_E4DEBUG),1)
     PROGRAMS += e4shared-debug
 endif
 
-EILMER_CORE_FILES := simcore.d simcore_gasdynamic_step.d simcore_solid_step.d \
+EILMER_CORE_FILES := lmrconfig.d simcore.d simcore_gasdynamic_step.d simcore_solid_step.d \
 	simcore_exchange.d simcore_io.d \
 	fileutil.d fvcell.d fvvertex.d fvinterface.d \
 	fluxcalc.d onedinterp.d flowgradients.d lsqinterp.d \
