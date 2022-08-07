@@ -12,13 +12,62 @@ local lmr_config = {}
 
 local json = require 'json'
 
-function lmr_config.lmrConfigAsTable()
+function lmrConfigAsTable()
    local lmrCfgFile = os.getenv("DGD") .. "/etc/lmr.cfg"
    local f = assert(io.open(lmrCfgFile, "r"))
    local jsonStr = f:read("*a")
    f:close()
    local jsonData = json.parse(jsonStr)
    return jsonData
+end
+
+local lmrCfg = lmrConfigAsTable()
+lmr_config.lmrCfg = lmrCfg
+
+function lmr_config.simulationConfigFilename()
+   return lmrCfg["config-directory"] .. "/" .. lmrCfg["config-filename"]
+end
+
+function lmr_config.simulationControlFilename()
+   return lmrCfg["config-directory"] .. "/" .. lmrCfg["control-filename"]
+end
+
+function lmr_config.blockListFilename()
+   return lmrCfg["config-directory"] .. "/" .. lmrCfg["block-list-filename"]
+end
+
+function lmr_config.nkConfigFilename()
+   return lmrCfg["config-directory"] .. "/" .. lmrCfg["newton-krylov-config-filename"]
+end
+
+function lmr_config.gridMetadataFilename(id)
+   -- When id is supplied give individual block
+   if id then
+      return lmrCfg["grid-directory"] .. "/" .. string.format(lmrCfg["block-filename-format"], id) .. "." .. lmrCfg["grid-metadata-filename"]
+   end
+   -- else, return global metadataname   
+   return lmrCfg["grid-directory"] .. "/" .. lmrCfg["grid-metadata-filename"]
+end
+
+function lmr_config.gridFilenameWithoutExt(id)
+   return lmrCfg["grid-directory"] .. "/" .. string.format(lmrCfg["block-filename-format"], id)
+end
+
+function lmr_config.steadyFlowFilename(snapshot, blkId)
+   fname = lmrCfg["flow-directory"]
+   fname = fname .. "/"
+   fname = fname .. lmrCfg["snapshot-directory-name"]
+   fname = fname .. "-"
+   fname = fname .. string.format(lmrCfg["snapshot-index-format"], snapshot)
+   fname = fname .. "/"
+   fname = fname .. string.format(lmrCfg["block-filename-format"], blkId)
+   fname = fname .. "."
+   fname = fname .. lmrCfg["zip-extension"]
+   return fname
+end
+
+function lmr_config.snapshotDirectoryName(snapshot)
+   return lmrCfg["flow-directory"] .. "/" .. lmrCfg["snapshot-directory-name"] .. "-" .. string.format(lmrCfg["snapshot-index-format"], snapshot)
 end
 
 return lmr_config

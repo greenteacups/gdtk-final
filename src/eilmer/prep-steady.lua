@@ -14,7 +14,7 @@ require 'bc'
 
 -- Extract directory and file names from central config.
 local lmr_config = require 'lmr_config'
-local lmrCfg = lmr_config.lmrConfigAsTable()
+local lmrCfg = lmr_config.lmrCfg
 
 local configoptions = require 'configoptions'
 config = configoptions.config
@@ -176,10 +176,7 @@ end
 
 function readGridMetadata()
    print('Read Grid Metadata.')
-   local gridDir = lmrCfg["grid-directory"]
-   local gridMD = lmrCfg["grid-metadata-filename"]
-   local blkFmt = lmrCfg["block-filename-format"]
-   local fileName = gridDir .. "/" .. gridMD
+   local fileName = lmr_config.gridMetadataFilename()
    local f = assert(io.open(fileName, "r"))
    local jsonStr = f:read("*a")
    f:close()
@@ -196,7 +193,7 @@ function readGridMetadata()
    --
    local ngrids = jsonData["ngrids"]
    for i=1, ngrids do
-      fileName = gridDir .. "/" .. string.format(blkFmt, i-1) .. "." .. gridMD
+      fileName = lmr_config.gridMetadataFilename(i-1)
       if false then --debug
          print('Set up grid object from file', fileName)
       end
@@ -217,15 +214,15 @@ function buildRuntimeConfigFiles()
    if config.do_temporal_DFT then
        check_DFT_settings()
    end
-   local cfgDir = lmrCfg["config-directory"]
+   local cfgDir = lmr_config.lmrCfg["config-directory"]
    os.execute("mkdir -p " .. cfgDir)
-   write_config_file(cfgDir .. "/" .. lmrCfg["config-filename"])
-   write_control_file(cfgDir .. "/" .. lmrCfg["control-filename"])
-   write_block_list_file(cfgDir .. "/" .. lmrCfg["block-list-filename"])
-   write_mpimap_file(cfgDir .. "/" .. lmrCfg["mpimap-filename"])
-   write_fluidBlockArrays_file(cfgDir .. "/" .. lmrCfg["fluidblock-arrays-filename"])
+   write_config_file(lmr_config.simulationConfigFilename())
+   -- write_control_file(cfgDir .. "/" .. lmrCfg["control-filename"])
+   write_block_list_file(lmr_config.blockListFilename())
+   --write_mpimap_file(cfgDir .. "/" .. lmrCfg["mpimap-filename"])
+   --write_fluidBlockArrays_file(cfgDir .. "/" .. lmrCfg["fluidblock-arrays-filename"])
    nkconfig.setIgnoreFlagInPhases(nkPhases)
-   nkconfig.writeNKConfigToFile(NewtonKrylovGlobalConfig, nkPhases, cfgDir .. "/" .. lmrCfg["newton-krylov-config-filename"])
+   nkconfig.writeNKConfigToFile(NewtonKrylovGlobalConfig, nkPhases, lmr_config.nkConfigFilename())
 
    if false then -- debug
       print("Done buildRuntimeConfigFiles.")
@@ -240,14 +237,8 @@ function buildFlowFiles(jobName)
          fluidBlockIdsForPrep[i] = fluidBlocks[i].id
       end
    end
-   local flowDir = lmrCfg["flow-directory"]
-   local snapDir = lmrCfg["snapshot-directory-name"]
-   local snapFmt = lmrCfg["snapshot-index-format"]
-   local snapshotNoughtDir = flowDir .. "/" .. snapDir .. "-" .. string.format(snapFmt, 0)
-   local blkFmt = lmrCfg["block-filename-format"]
-   local blkExt = lmrCfg["zip-extension"]
-   local gridDir = lmrCfg["grid-directory"]
 
+   local snapshotNoughtDir = lmr_config.snapshotDirectoryName(0)
    local fileName
    os.execute("mkdir -p " .. snapshotNoughtDir)
    for i, id in ipairs(fluidBlockIdsForPrep) do
@@ -257,11 +248,11 @@ function buildFlowFiles(jobName)
       local idx = id+1
       local blk = fluidBlocks[idx]
       local gridMetadata = gridsList[idx]
-      fileName = snapshotNoughtDir .. "/" .. string.format(blkFmt, id) .. "." .. blkExt
+      fileName = lmr_config.steadyFlowFilename(0, id)
       --
       if not blk.grid then
          -- We assume a direct match between FluidBlock and grid id numbers.
-         local gridFileName = gridDir .. "/" .. string.format(blkFmt, id)
+         local gridFileName = lmr_config.gridFilenameWithoutExt(id)
          local gridFmt
          if config.grid_format == "gziptext" then
             gridFileName = gridFileName .. ".gz"

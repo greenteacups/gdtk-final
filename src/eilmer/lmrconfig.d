@@ -50,18 +50,27 @@ string simulationControlFilename()
 }
 
 /**
+ * Return NK config filename as a string.
+ *
+ * Authors: RJG
+ * Date: 2022-08-07
+ */
+string nkConfigFilename() {
+    return lmrConfig["config-directory"].str ~ "/" ~ lmrConfig["newton-krylov-config-filename"].str;
+}
+    
+
+/**
  * Return the grid filename for a single block ('id') as a string.
  *
  * Authors: RJG
  * Date: 2022-08-06
  */
-string gridFilename(int id)
+string gridFilenameWithoutExt(int id)
 {
     string gName = lmrConfig["grid-directory"].str;
     gName ~= "/";
     gName ~= format(lmrConfig["block-filename-format"].str, id);
-    gName ~= ".";
-    gName ~= lmrConfig["gzip-extension"].str;
     return gName;
 }
 
@@ -71,15 +80,15 @@ string gridFilename(int id)
  * Authors: RJG
  * Date: 2022-08-06
  */
-string flowFilename(int id)
+string steadyFlowFilename(int snapshot, int blkId)
 {
     string fName = lmrConfig["flow-directory"].str;
     fName ~= "/";
     fName ~= lmrConfig["snapshot-directory-name"].str;
     fName ~= "-";
-    fName ~= format(lmrConfig["snapshot-index-format"].str, id);
+    fName ~= format(lmrConfig["snapshot-index-format"].str, snapshot);
     fName ~= "/";
-    fName ~= format(lmrConfig["block-filename-format"].str, id);
+    fName ~= format(lmrConfig["block-filename-format"].str, blkId);
     fName ~= ".";
     fName ~= lmrConfig["zip-extension"].str;
     return fName;

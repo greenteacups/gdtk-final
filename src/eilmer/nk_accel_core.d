@@ -449,6 +449,7 @@ void initNewtonKrylovSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
         throw new NewtonKrylovException("No FluidBlocks; no point in continuing with simulation initialisation.");
     }
 
+    initLocalFluidBlocks();
     initBlockIDs();
 
     initThreadPool(maxCPUs);
@@ -457,7 +458,7 @@ void initNewtonKrylovSimulation(int snapshotStart, int maxCPUs, int threadsPerMP
     initFluidBlocksGridsAndGeom();
     initFluidBlocksGlobalCellIDs();
     initFluidBlocksZones();
-    initFluidBlocksFlowField();
+    initFluidBlocksFlowField(snapshotStart);
 
     initFullFaceDataExchange();
     initMappedCellDataExchange();
@@ -506,6 +507,19 @@ void initConfiguration()
     set_config_for_blocks(cfgData);
 }
 
+void initLocalFluidBlocks()
+{
+    // [TODO] mpi version
+    foreach (blk; globalBlocks) {
+        auto myfblk = cast(FluidBlock) blk;
+        if (myfblk) { localFluidBlocks ~= myfblk; }
+        /+ [TODO] add in solid blocks 
+        auto mysblk = cast(SSolidBlock) blk;
+        if (mysblk) { localSolidBlocks ~= mysblk; }
+        +/
+    }
+}
+
 void initBlockIDs()
 {
     alias cfg = GlobalConfig;
@@ -549,7 +563,18 @@ void initFluidBlocksGridsAndGeom()
     bool anyBlockFail = false;
     foreach (blk; parallel(localFluidBlocks,1)) {
         try {
-            blk.init_grid_and_flow_arrays(gridFilename(blk.id));
+            string gName = gridFilenameWithoutExt(blk.id);
+            if (GlobalConfig.grid_format == "gziptext") {
+                gName ~= "." ~ lmrConfig["gziptext-extension"].str;
+            }
+            else if (GlobalConfig.grid_format == "rawbinary") {
+                gName ~= "." ~ lmrConfig["rawbinary-extension"].str;
+            }
+            else {
+                throw new Error(format("Oops, invalid grid_format: %s", GlobalConfig.grid_format));
+            }
+            debug { writeln("Calling init_grid_and_flow_arrays for grid: ", gName); }
+            blk.init_grid_and_flow_arrays(gName);
             blk.compute_primary_cell_geometric_data(0);
             blk.add_IO();
         }
@@ -589,11 +614,11 @@ void initFluidBlocksZones()
     }
 }
 
-void initFluidBlocksFlowField()
+void initFluidBlocksFlowField(int snapshotStart)
 {
     bool anyBlockFail = false;
     foreach (blk; parallel(localFluidBlocks,1)) {
-        blk.read_zip_solution(flowFilename(blk.id));
+        blk.read_zip_solution(steadyFlowFilename(snapshotStart, blk.id));
         foreach (iface; blk.faces) iface.gvel.clear();
         foreach (cell; blk.cells) {
             cell.encode_conserved(0, 0, blk.omegaz);
@@ -762,7 +787,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
     string jobName = cfg.base_file_name;
 
     if (cfg.verbosity_level > 1) writeln("Read N-K config file.");
-    JSONValue jsonData = readJSONfile("config/"~cfg.base_file_name~".nkconfig");
+    JSONValue jsonData = readJSONfile(nkConfigFilename());
     nkCfg.readValuesFromJSON(jsonData);
     // Allocate space and configure phases
     nkPhases.length = nkCfg.numberOfPhases;
@@ -1060,7 +1085,7 @@ void performNewtonKrylovUpdates(int snapshotStart, int maxCPUs, int threadsPerMP
                     writeln("*************************************************************************");
                     writeln("*");
                     writefln("*  After first %d steps, reference residuals have been set.", nkCfg.numberOfStepsForSettingReferenceResiduals);
-                    writefln("*  Reference global residual: %.12e\n", referenceGlobalResidual);
+                    writefln("*  Reference global residual: %.12e", referenceGlobalResidual);
                     writeln("*");
                     writeln("*  Reference residuals for each conservation equation:");
                     foreach (ivar; 0 .. nConserved) {

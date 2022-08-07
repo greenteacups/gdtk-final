@@ -14,7 +14,7 @@ require 'blk_conn'
 
 -- Extract grid directory and names from central config.
 local lmr_config = require 'lmr_config'
-local lmrCfg = lmr_config.lmrConfigAsTable()
+local lmrCfg = lmr_config.lmrCfg
 local gridDir = lmrCfg["grid-directory"]
 local gridMD = lmrCfg["grid-metadata-filename"]
 local blkFmt = lmrCfg["block-filename-format"]
@@ -90,8 +90,8 @@ end -- registerGridArray
 function writeGridFiles(jobName)
    print(string.format('Write grid files for job="%s"', jobName))
    --
-   os.execute("mkdir -p " .. gridDir)
-   local fileName = gridDir .. "/" .. gridMD
+   os.execute("mkdir -p " .. lmrCfg["grid-directory"])
+   local fileName = lmr_config.gridMetadataFilename()
    local f = assert(io.open(fileName, "w"))
    f:write('{\n')
    f:write(string.format('  "ngrids": %d,\n', #gridsList))
@@ -120,7 +120,7 @@ function writeGridFiles(jobName)
          print("grid id=", g.id)
       end
       -- Write the grid proper.
-      fileName = gridDir .. "/" .. string.format(blkFmt, g.id)
+      fileName = lmr_config.gridFilenameWithoutExt(g.id)
       if config.grid_format == "gziptext" then
 	 g.grid:write_to_gzip_file(fileName .. "." .. lmrCfg["gziptext-extension"])
       elseif config.grid_format == "rawbinary" then
@@ -129,7 +129,7 @@ function writeGridFiles(jobName)
 	 error(string.format("Oops, invalid grid_format: %s", config.grid_format))
       end
       -- Write the grid metadata.
-      fileName = gridDir .. "/" .. string.format(blkFmt, g.id) .. "." .. gridMD
+      fileName = lmr_config.gridMetadataFilename(g.id)
       local f = assert(io.open(fileName, "w"))
       f:write(g:tojson() .. '\n')
       f:close()
