@@ -238,7 +238,7 @@ function buildFlowFiles(jobName)
       end
    end
 
-   local snapshotNoughtDir = lmr_config.snapshotDirectoryName(0)
+   local snapshotNoughtDir = lmr_config.steadyFlowDirectory(0)
    local fileName
    os.execute("mkdir -p " .. snapshotNoughtDir)
    for i, id in ipairs(fluidBlockIdsForPrep) do

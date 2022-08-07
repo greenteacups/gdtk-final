@@ -75,6 +75,23 @@ string gridFilenameWithoutExt(int id)
 }
 
 /**
+ * Return the directory name for a snapshot of a flow field.
+ *
+ * Authors: RJG
+ * Date: 2022-08-07
+ */
+string steadyFlowDirectory(int snapshot)
+{
+    string dName = lmrConfig["snapshot-directory"].str;
+    dName ~= "/";
+    dName ~= format(lmrConfig["snapshot-index-format"].str, snapshot);
+    dName ~= "/";
+    dName ~= lmrConfig["flow-directory"].str;
+    return dName;
+                             
+}
+
+/**
  * Return the flow solution filename for a single block ('id') as a string.
  *
  * Authors: RJG
@@ -82,18 +99,12 @@ string gridFilenameWithoutExt(int id)
  */
 string steadyFlowFilename(int snapshot, int blkId)
 {
-    string fName = lmrConfig["flow-directory"].str;
-    fName ~= "/";
-    fName ~= lmrConfig["snapshot-directory-name"].str;
-    fName ~= "-";
-    fName ~= format(lmrConfig["snapshot-index-format"].str, snapshot);
+    string fName = steadyFlowDirectory(snapshot);
     fName ~= "/";
     fName ~= format(lmrConfig["block-filename-format"].str, blkId);
     fName ~= ".";
     fName ~= lmrConfig["zip-extension"].str;
     return fName;
-    
-    
 }
 
 static this()

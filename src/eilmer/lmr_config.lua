@@ -53,21 +53,22 @@ function lmr_config.gridFilenameWithoutExt(id)
    return lmrCfg["grid-directory"] .. "/" .. string.format(lmrCfg["block-filename-format"], id)
 end
 
+function lmr_config.steadyFlowDirectory(snapshot)
+   dname = lmrCfg["snapshot-directory"]
+   dname = dname .. "/"
+   dname = dname .. string.format(lmrCfg["snapshot-index-format"], snapshot)
+   dname = dname .. "/"
+   dname = dname .. lmrCfg["flow-directory"]
+   return dname
+end
+
 function lmr_config.steadyFlowFilename(snapshot, blkId)
-   fname = lmrCfg["flow-directory"]
-   fname = fname .. "/"
-   fname = fname .. lmrCfg["snapshot-directory-name"]
-   fname = fname .. "-"
-   fname = fname .. string.format(lmrCfg["snapshot-index-format"], snapshot)
+   fname = lmr_config.steadyFlowDirectory(snapshot)
    fname = fname .. "/"
    fname = fname .. string.format(lmrCfg["block-filename-format"], blkId)
    fname = fname .. "."
    fname = fname .. lmrCfg["zip-extension"]
    return fname
-end
-
-function lmr_config.snapshotDirectoryName(snapshot)
-   return lmrCfg["flow-directory"] .. "/" .. lmrCfg["snapshot-directory-name"] .. "-" .. string.format(lmrCfg["snapshot-index-format"], snapshot)
 end
 
 return lmr_config
