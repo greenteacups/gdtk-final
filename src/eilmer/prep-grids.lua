@@ -87,9 +87,7 @@ end -- registerGridArray
 --
 -- IO functions to write the grid and connection files.
 --
-function writeGridFiles(jobName)
-   print(string.format('Write grid files for job="%s"', jobName))
-   --
+function writeGridFiles()
    os.execute("mkdir -p " .. lmrCfg["grid-directory"])
    local fileName = lmr_config.gridMetadataFilename()
    local f = assert(io.open(fileName, "w"))

@@ -155,6 +155,11 @@ EILMER_LUA_FILES := lua_helper.d \
 EILMER_EXTRA_FILES := postprocess.d flowsolution.d \
 	vtk_writer.d tecplot_writer_classic.d tecplot_writer.d
 
+EILMER_CMD_FILES := lmrcli.d \
+	command.d \
+	flow2vtk.d \
+	prep_grids.d
+
 EILMER_FILES := $(EILMER_CORE_FILES) $(EILMER_LUA_FILES) $(EILMER_EXTRA_FILES)
 
 BC_FILES := bc/package.d \
@@ -1012,3 +1017,19 @@ alpha_qss_kernel_cuda_tmplt.cu: utils/alpha_qss_kernel_cuda_tmplt.cu
 
 libcudakernel.so: libcudakernel.so
 	cp libcudakernel.so ./../lib/
+
+lmr: $(EILMER_FILES) $(EILMER_CMD_FILES) \
+	$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
+	$(GAS_FILES) $(CEQ_SRC_FILES) $(LIBCEQ) $(LIBGASF) $(LIBLUA) $(GZIP_FILES) \
+	$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
+	$(NM_FILES) $(UTIL_FILES) \
+	$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES)
+	$(DMD) $(FLAVOUR_FLAGS) $(DFLAGS) $(OF)$@ \
+		$(EILMER_FILES) $(EILMER_CMD_FILES) \
+		$(BC_FILES) $(SOLID_FILES) $(FIELD_FILES) $(GEOM_FILES) $(GRID_FILES) \
+		$(GAS_FILES) $(CEQ_SRC_FILES) $(GZIP_FILES) \
+		$(UTIL_FILES) $(NM_FILES) \
+		$(KINETICS_FILES) $(GAS_LUA_FILES) $(KINETICS_LUA_FILES) \
+		$(GASDYN_FILES) $(GASDYN_LUA_FILES) $(NM_LUA_FILES) $(TECPLOT_FILES) \
+		$(LIBCEQ) $(LIBGASF) $(LIBLUA) \
+		$(DLINKFLAGS)
