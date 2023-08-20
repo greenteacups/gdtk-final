@@ -1,0 +1,22 @@
+#%Module 1.0
+# Module file for Eilmer 4 Gas Dynamics Code
+# Compiler: ldc2
+# Build Date: Sun 20 Aug 2023 14:47:50 AEST
+# Commit: 8f933b8c
+# Commit Age: 18 hours ago
+# author: Nick Gibbons (n.gibbons@uq.edu.au)
+
+module-whatis "Setup environment variables for running Eilmer 4"
+
+set gdtkrepo /home/uqsvanoe/gdtk-final
+set gdtk /home/uqsvanoe/gdtkinst
+
+setenv DGD_REPO $gdtkrepo
+setenv DGD $gdtk
+append-path PATH $gdtk/bin
+append-path LD_LIBRARY_PATH $gdtk/lib
+setenv DGD_LUA_PATH $gdtk/lib/?.lua
+setenv DGD_LUA_CPATH $gdtk/lib/?.so
+append-path PYTHONPATH $gdtk/lib
+
+conflict dgd gdtk
