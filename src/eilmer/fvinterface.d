@@ -817,4 +817,45 @@ public:
         }
     } // end viscous_flux_calc()
 
+
+    @nogc
+    void resistive_MHD_flux_calc()
+    // Diffusive flux terms from "An adaptive mesh semi-implicit-conservative unsplit method
+    // for resistive MHD" by R. Samtaney (2005)
+    //
+    // Implemented by Sebastiaan van Oeveren - 11/08/23
+    {
+        // Variables:
+        auto gmodel = myConfig.gmodel;
+        number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
+        number B0 = sqrt(fs.B.x^^2 + fs.B.y^^2);
+        number L = 12.8; //length;                      // Characterisitc length scale
+
+        number eta = 0.001; //1/(mu0*sigma);     // Diffusivity
+
+        number U0 = B0/sqrt(mu0*fs.gas.rho);  // Alfven speed
+        number S = mu0*U0*L/eta;       // Lundquist number (Magnetic Reynolds Number)
+
+        number dBxdx = grad.B[0][0];
+        number dBxdy = grad.B[0][1];
+        number dBydx = grad.B[1][0];
+        number dBydy = grad.B[1][1];
+
+        // Brin Test Case Boundary Condition - Ideal conducting walls
+        if(pos.y > 6.0 || pos.y < -6.0) {dBxdy = 0.0, dBydy = 0.0;}
+
+        // Calculate diffusion terms
+        number Bxdiffusion = (1/S) * eta * (dBxdy - dBydx);
+        number Bydiffusion = (1/S) * eta * (dBydx - dBxdy);
+
+        number ediffusion = (1/S) * eta * (dBydx - dBxdy) * (fs.B.y -  fs.B.x);
+       
+        // Adjust conserved values
+        auto cqi = myConfig.cqi;
+
+        F[cqi.xB] -= Bxdiffusion;
+        F[cqi.yB] -= Bydiffusion;
+        F[cqi.totEnergy] -= ediffusion;
+    }
+
 } // end of class FV_Interface
