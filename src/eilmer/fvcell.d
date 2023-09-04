@@ -1134,7 +1134,7 @@ public:
         Q.clear();
     }
 
-    @nogc
+    @nogc ////////
     void add_MHD_Lorentz_force()
     // 2D Lorentz Force Computation
     // Added based on Alexis Lefevre's MHD UDF
@@ -1185,9 +1185,14 @@ public:
         number Bx = fs.B.x;
         number By = fs.B.y;
 
-        auto cqi = myConfig.cqi;
-        Q[cqi.xMom] += -sigma*By*(ux*By-uy*Bx);
-        Q[cqi.yMom] += sigma*Bx*(ux*By-uy*Bx);
+        if (SimState.time > 1.3e-4){
+            auto cqi = myConfig.cqi;
+            number scale = 1.0;
+            if (SimState.time < 1.8e-4){scale = SimState.time / 1.8e-4;}
+
+            Q[cqi.xMom] += -sigma*By*(ux*By-uy*Bx) *scale;
+            Q[cqi.yMom] += sigma*Bx*(ux*By-uy*Bx) *scale;
+        }
     }
 
     @nogc
