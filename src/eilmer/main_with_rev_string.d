@@ -287,10 +287,10 @@ longUsageMsg ~= to!string(totalCPUs) ~" on this machine
     if (verbosityLevel > 0) {
         if (GlobalConfig.is_master_task) {
             writeln("Eilmer 4.0 compressible-flow simulation code.");
-            writeln("Revision-id: 8f933b8c");
-            writeln("Revision-date: Sat Aug 19 20:44:14 2023 +1000");
+            writeln("Revision-id: d29a15d2");
+            writeln("Revision-date: Sun Aug 20 15:03:46 2023 +1000");
             writeln("Compiler-name: ldc2");
-            writeln("Build-date: Sun 20 Aug 2023 14:47:50 AEST");
+            writeln("Build-date: Sun 20 Aug 2023 20:19:21 AEST");
             //
             write("Build-flavour: ");
             version(flavour_debug) { writeln("debug"); }
