@@ -1095,6 +1095,14 @@ void gasdynamic_explicit_increment_with_fixed_grid()
                 SimState.dt_global = SimState.dt_global * 0.2;
                 break;
             }
+            if (GlobalConfig.MHD_resistive) {
+                //printf("Test\n");
+                foreach (blk; parallel(localFluidBlocksBySize,1)) {
+                    if (blk.active) {
+                        blk.magnetic_field_flux();
+                    }
+                }
+            }
             if (GlobalConfig.viscous) {
                 // Phase 08 LOCAL
                 try {
