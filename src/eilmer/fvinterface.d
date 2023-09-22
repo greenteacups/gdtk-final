@@ -30,6 +30,7 @@ import conservedquantities;
 import globalconfig;
 import lsqinterp;
 import mass_diffusion;
+import globaldata : SimState;
 
 enum IndexDirection {i=0, j, k, none=666}; // Needed for StructuredGrid interpolation.
 
@@ -457,6 +458,21 @@ public:
                     grad.turb[i][2] = c.grad.turb[i][2];
                 }
             }
+            // MHD
+            version(MHD) {
+                // vel-B
+                grad.B[0][0] = c.grad.B[0][0];
+                grad.B[0][1] = c.grad.B[0][1];
+                grad.B[0][2] = c.grad.B[0][2];
+                // vel-B
+                grad.B[1][0] = c.grad.B[1][0];
+                grad.B[1][1] = c.grad.B[1][1];
+                grad.B[1][2] = c.grad.B[1][2];
+                // vel-B
+                grad.B[2][0] = c.grad.B[2][0];
+                grad.B[2][1] = c.grad.B[2][1];
+                grad.B[2][2] = c.grad.B[2][2];
+            }
         } else {
             // With two attached cells, we are at a face that is internal to the domain
             // and so we can proceed to compute the average of the gradient values.
@@ -553,6 +569,33 @@ public:
                     grad.turb[i][1] = 0.5*(cL0.grad.turb[i][1]+cR0.grad.turb[i][1]) - jump*(ny/ndotehat);
                     grad.turb[i][2] = 0.5*(cL0.grad.turb[i][2]+cR0.grad.turb[i][2]) - jump*(nz/ndotehat);
                 }
+            }
+            // MHD
+            version(MHD) {
+                // B-x
+                avgdotehat = 0.5*(cL0.grad.B[0][0]+cR0.grad.B[0][0])*ehatx +
+                    0.5*(cL0.grad.B[0][1]+cR0.grad.B[0][1])*ehaty +
+                    0.5*(cL0.grad.B[0][2]+cR0.grad.B[0][2])*ehatz;
+                jump = avgdotehat - (cR0.fs.B.x - cL0.fs.B.x)/emag;
+                grad.B[0][0] = 0.5*(cL0.grad.B[0][0]+cR0.grad.B[0][0]) - jump*(nx/ndotehat);
+                grad.B[0][1] = 0.5*(cL0.grad.B[0][1]+cR0.grad.B[0][1]) - jump*(ny/ndotehat);
+                grad.B[0][2] = 0.5*(cL0.grad.B[0][2]+cR0.grad.B[0][2]) - jump*(nz/ndotehat);
+                // B-y
+                avgdotehat = 0.5*(cL0.grad.B[1][0]+cR0.grad.B[1][0])*ehatx +
+                    0.5*(cL0.grad.B[1][1]+cR0.grad.B[1][1])*ehaty +
+                    0.5*(cL0.grad.B[1][2]+cR0.grad.B[1][2])*ehatz;
+                jump = avgdotehat - (cR0.fs.B.y - cL0.fs.B.y)/emag;
+                grad.B[1][0] = 0.5*(cL0.grad.B[1][0]+cR0.grad.B[1][0]) - jump*(nx/ndotehat);
+                grad.B[1][1] = 0.5*(cL0.grad.B[1][1]+cR0.grad.B[1][1]) - jump*(ny/ndotehat);
+                grad.B[1][2] = 0.5*(cL0.grad.B[1][2]+cR0.grad.B[1][2]) - jump*(nz/ndotehat);
+                // B-z
+                avgdotehat = 0.5*(cL0.grad.B[2][0]+cR0.grad.B[2][0])*ehatx +
+                    0.5*(cL0.grad.B[2][1]+cR0.grad.B[2][1])*ehaty +
+                    0.5*(cL0.grad.B[2][2]+cR0.grad.B[2][2])*ehatz;
+                jump = avgdotehat - (cR0.fs.B.z - cL0.fs.B.z)/emag;
+                grad.B[2][0] = 0.5*(cL0.grad.B[2][0]+cR0.grad.B[2][0]) - jump*(nx/ndotehat);
+                grad.B[2][1] = 0.5*(cL0.grad.B[2][1]+cR0.grad.B[2][1]) - jump*(ny/ndotehat);
+                grad.B[2][2] = 0.5*(cL0.grad.B[2][2]+cR0.grad.B[2][2]) - jump*(nz/ndotehat);
             }
         }
     } // end average_cell_spatial_derivs()
@@ -818,6 +861,7 @@ public:
     } // end viscous_flux_calc()
 
 
+
     @nogc
     void resistive_MHD_flux_calc()
     // Diffusive flux terms from "An adaptive mesh semi-implicit-conservative unsplit method
@@ -828,13 +872,20 @@ public:
         // Variables:
         auto gmodel = myConfig.gmodel;
         number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
-        number B0 = sqrt(fs.B.x^^2 + fs.B.y^^2);
-        number L = 12.8; //length;                      // Characterisitc length scale
+        number B0 = 0.5; //sqrt(fs.B.x^^2 + fs.B.y^^2);
+        number rho0 = 0.0000348607; //fs.gas.rho
+        number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2);
+       
+        number L = 1.0;                      // Characterisitc length scale
+        number sigma = 40;
 
-        number eta = 0.001; //1/(mu0*sigma);     // Diffusivity
+        number eta = 1/(mu0*sigma);     // Diffusivity
 
-        number U0 = B0/sqrt(mu0*fs.gas.rho);  // Alfven speed
-        number S = mu0*U0*L/eta;       // Lundquist number (Magnetic Reynolds Number)
+        //number U0 = B0/sqrt(mu0*rho0);  // Alfven speed
+        //number S = mu0*U0*L/eta;       // Lundquist number (Magnetic Reynolds Number)
+       
+        number S = mu0*sigma*u0*L;
+        if (S < 0.1) {S = 0.1;}
 
         number dBxdx = grad.B[0][0];
         number dBxdy = grad.B[0][1];
@@ -842,20 +893,41 @@ public:
         number dBydy = grad.B[1][1];
 
         // Brin Test Case Boundary Condition - Ideal conducting walls
-        if(pos.y > 6.0 || pos.y < -6.0) {dBxdy = 0.0, dBydy = 0.0;}
+        //if(pos.x >= 0.48 || pos.x <= -0.48 ) {dBxdy = 0.0, dBydx = 0.0;}
 
         // Calculate diffusion terms
         number Bxdiffusion = (1/S) * eta * (dBxdy - dBydx);
         number Bydiffusion = (1/S) * eta * (dBydx - dBxdy);
-
         number ediffusion = (1/S) * eta * (dBydx - dBxdy) * (fs.B.y -  fs.B.x);
-       
-        // Adjust conserved values
-        auto cqi = myConfig.cqi;
 
+        // Calculate advection terms
+        number Bxadvection = fs.vel.y*fs.B.x - fs.vel.x*fs.B.y;
+        number Byadvection = fs.vel.x*fs.B.y - fs.vel.y*fs.B.x;    
+
+        number Momxconv = 0.5*fs.B.y^^2 - 0.5*fs.B.x^^2 - fs.B.x*fs.B.y;
+        number Momyconv = 0.5*fs.B.x^^2 - 0.5*fs.B.y^^2 - fs.B.x*fs.B.y;
+        number econv = Momxconv*fs.vel.x + Momyconv*fs.vel.y;
+
+        auto cqi = myConfig.cqi;
+        if (SimState.time > 5.0e-4) {
+
+        //F[cqi.xB] += Bxadvection;
+        //F[cqi.yB] += Byadvection;
+        //F[cqi.xMom] += Momxconv;
+        //F[cqi.yMom] += Momxconv;
+        //F[cqi.totEnergy] += econv;
+
+        //printf("xpos = %f, ypos = %f, S = %f\n", pos.x, pos.y, Bxdiffusion, Bydiffusion);
+       
         F[cqi.xB] -= Bxdiffusion;
         F[cqi.yB] -= Bydiffusion;
         F[cqi.totEnergy] -= ediffusion;
+        }
+        else {
+        F[cqi.xB] = 0.0;
+        F[cqi.yB] = 0.0;
+        }
     }
+
 
 } // end of class FV_Interface
