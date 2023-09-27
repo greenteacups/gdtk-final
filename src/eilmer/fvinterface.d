@@ -860,8 +860,6 @@ public:
         }
     } // end viscous_flux_calc()
 
-
-
     @nogc
     void resistive_MHD_flux_calc()
     // Diffusive flux terms from "An adaptive mesh semi-implicit-conservative unsplit method
@@ -869,15 +867,50 @@ public:
     //
     // Implemented by Sebastiaan van Oeveren - 11/08/23
     {
-        // Variables:
+    	// Conductivity:
+    	// Electron number density: n_e
         auto gmodel = myConfig.gmodel;
+        number massf_e_minus = 0.0;
+
+        int electron_index;
+        foreach(it; 0 .. myConfig.gmodel.n_species)
+        {
+            if (gmodel.species_name(it) == "e-") {
+                massf_e_minus = fs.gas.massf[it];
+            }
+        }
+
+        number rho = fs.gas.rho;
+        number T = fs.gas.T;
+        number Na = 6.02214076e23; // Avogradro's Number (1/mol)
+        number We = 5.485799e-7; // Electron molar mass (kg/mol)
+        number n_e = Na*massf_e_minus*rho/We;
+
+        // Electrical conductivity: sigma
+        number sigma = 1.0e1;
+        number K_to_eV = 11604.525;  //conversion between Kelvin and eV  --K eV-1
+        number Te = T / K_to_eV;
+        number lnA = 0;
+        number n_e_min = 1.0e19;
+
+        // electrical conductivity from Raizer for a strongly ionized plasma
+        if (n_e < n_e_min) { sigma = 1.0e1; }
+        else {
+            lnA = 13.57 + 1.5 * log10(Te) - 0.5 * log10((n_e+1.0)*1.0e-6);
+            sigma = (1.9e2 * (Te^^(1.5)) / lnA) * 100.0;  //Ohm-1 m-1
+        }
+        // Handles extreme cases that may occur in low density/freestream flow
+        if (sigma > 1.0e5) { sigma = 1.0e1; }
+    
+        // Variables:
+        //auto gmodel = myConfig.gmodel;
         number mu0 = 4 * std.math.PI * 1e-7;    // Permeability of free space
         number B0 = 0.5; //sqrt(fs.B.x^^2 + fs.B.y^^2);
         number rho0 = 0.0000348607; //fs.gas.rho
         number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2);
        
-        number L = 1.0;                      // Characterisitc length scale
-        number sigma = 40;
+        number L = 0.4;                      // Characterisitc length scale
+        //number sigma = 4000;
 
         number eta = 1/(mu0*sigma);     // Diffusivity
 
@@ -885,20 +918,20 @@ public:
         //number S = mu0*U0*L/eta;       // Lundquist number (Magnetic Reynolds Number)
        
         number S = mu0*sigma*u0*L;
-        if (S < 0.1) {S = 0.1;}
+        //if (S < 0.01) {S = 0.01;}
 
-        number dBxdx = grad.B[0][0];
-        number dBxdy = grad.B[0][1];
-        number dBydx = grad.B[1][0];
-        number dBydy = grad.B[1][1];
+        number dBxdx = grad.B[0][0] ;
+        number dBxdy = grad.B[0][1] ;
+        number dBydx = grad.B[1][0] ;
+        number dBydy = grad.B[1][1] ;
 
         // Brin Test Case Boundary Condition - Ideal conducting walls
         //if(pos.x >= 0.48 || pos.x <= -0.48 ) {dBxdy = 0.0, dBydx = 0.0;}
 
         // Calculate diffusion terms
-        number Bxdiffusion = (1/S) * eta * (dBxdy - dBydx);
-        number Bydiffusion = (1/S) * eta * (dBydx - dBxdy);
-        number ediffusion = (1/S) * eta * (dBydx - dBxdy) * (fs.B.y -  fs.B.x);
+        number Bxdiffusion = (1/S) * eta * (dBxdy - dBydx) *n.y;
+        number Bydiffusion = (1/S) * eta * (dBydx - dBxdy) *n.x;
+        number ediffusion = (1/S) * eta * (fs.B.y*(dBydx - dBxdy)*n.x -  fs.B.x*(dBydx - dBxdy)*n.y);
 
         // Calculate advection terms
         number Bxadvection = fs.vel.y*fs.B.x - fs.vel.x*fs.B.y;
@@ -914,7 +947,7 @@ public:
         //F[cqi.xB] += Bxadvection;
         //F[cqi.yB] += Byadvection;
         //F[cqi.xMom] += Momxconv;
-        //F[cqi.yMom] += Momxconv;
+        //F[cqi.yMom] += Momyconv;
         //F[cqi.totEnergy] += econv;
 
         //printf("xpos = %f, ypos = %f, S = %f\n", pos.x, pos.y, Bxdiffusion, Bydiffusion);
@@ -928,6 +961,7 @@ public:
         F[cqi.yB] = 0.0;
         }
     }
+
 
 
 } // end of class FV_Interface
