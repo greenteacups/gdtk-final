@@ -118,6 +118,9 @@ void compute_interface_flux_interior(ref FlowState Lft, ref FlowState Rght,
     case FluxCalculator.hlle2:
         hlle2(Lft, Rght, IFace, myConfig);
         break;
+    case FluxCalculator.hlle3:
+        hlle3(Lft, Rght, IFace, myConfig);
+        break;
     case FluxCalculator.roe:
         roe(Lft, Rght, IFace, myConfig);
         break;
@@ -1924,6 +1927,182 @@ void hlle2(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
         }
     }
 } // end hlle2()
+
+@nogc
+void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref LocalConfig myConfig, number factor=1.0)
+// HLLE fluxes for MHD.
+// From V. Wheatley Matlab implementation
+// Author D. M. Bond
+// Port to D by PJ, 2014-07-24
+
+// Implementation is based on "On Godunov-Type Methods for Gas Dynamics"
+// by B. Einfeldt, SIAM Journal on Numerical Analysis Vol 25 No 2
+// and "Multidimensional HLLE Riemann Solver; Application to Euler and 
+//      Magnetohydrodynamic Flows" by D. Balsara
+
+{
+    auto gmodel = myConfig.gmodel;
+    @nogc number SAFESQRT(number x) { return (fabs(x)>1.0e-14) ? sqrt(x) : to!number(0.0); }
+    // Unpack the flow-state vectors for either side of the interface.
+    // Store in work vectors, those quantities that will be neede later.
+    number rL = Lft.gas.rho;
+    number pL = Lft.gas.p;
+    number uL = Lft.vel.x;
+    number vL = Lft.vel.y;
+    number wL = Lft.vel.z;
+    version(MHD) {
+        number BxL = Lft.B.x;
+        number ByL = Lft.B.y;
+        number BzL = Lft.B.z;
+    }
+    number rR = Rght.gas.rho;
+    number pR = Rght.gas.p;
+    number uR = Rght.vel.x;
+    number vR = Rght.vel.y;
+    number wR = Rght.vel.z;
+    version(MHD) {
+        number BxR = Rght.B.x;
+        number ByR = Rght.B.y;
+        number BzR = Rght.B.z;
+    }
+    //
+    // Derive the gas "constants" from the local conditions.
+    number cvL = gmodel.Cv(Lft.gas);
+    number RgasL = gmodel.R(Lft.gas);
+    number cvR = gmodel.Cv(Rght.gas);
+    number RgasR = gmodel.R(Rght.gas);
+    number rLsqrt = sqrt(rL);
+    number rRsqrt = sqrt(rR);
+    number alpha = rLsqrt / (rLsqrt + rRsqrt);
+    number cv = alpha * cvL + (1.0 - alpha) * cvR;
+    number Rgas = alpha * RgasL + (1.0 - alpha) * RgasR;
+    number cp = cv + Rgas;
+    number gam = cp / cv;
+    //
+    // Compute Roe Average State (currently simple average)
+    number rho = 0.5*(rL+rR);
+    number p   = 0.5*(pL+pR);
+    number u   = 0.5*(uL+uR);
+    //v   = 0.5*(vL+vR);
+    //w   = 0.5*(wL+wR);
+    version(MHD) {
+        number Bx  = 0.5*(BxL+BxR);
+        number By  = 0.5*(ByL+ByR);
+        number Bz  = 0.5*(BzL+BzR);
+    }
+    if(SimState.time < 5.0e-4) {Bx = 0.0; By = 0.0; BxL = 0.0; ByL = 0.0; BxR = 0.0; ByR = 0.0;}
+    //
+    // Compute Eigenvalues of Roe Matrix
+    //u2=u*u;
+    //v2=v*v;
+    //w2=w*w;
+    //uu=u2+v2+w2;
+    version(MHD) {
+        number a2 = gam*p/rho;
+        number Bx2 = Bx*Bx;
+        number Bt2 = By*By + Bz*Bz;
+        number BB = Bx2 + Bt2;
+        number ca2 = Bx2/rho;
+        number alf = a2+BB/rho;
+        number als = SAFESQRT(alf*alf-4.0*a2*ca2);
+        number cf2 = 0.5*(alf+als);
+        number cf = sqrt(cf2);
+        number wp = u+cf;
+        number wm = u-cf;
+        //
+        // Compute the Jump in Conserved Variables between L and R
+        number BxL2 = BxL*BxL;
+        number BtL2 = ByL*ByL + BzL*BzL;
+        number BBL = BxL2 + BtL2;
+        number ptL = pL + 0.5*BBL;
+        number uL2 = uL*uL;
+        number uuL = uL2 + vL*vL + wL*wL;
+        number aL2 = gam*pL/rL;
+        number caL2 = BxL2/rL;
+        number alfL = aL2+BBL/rL;
+        number alsL = SAFESQRT(alfL*alfL-4.0*aL2*caL2);
+        number cfL2 = 0.5*(alfL+alsL);
+        number cfL = sqrt(cfL2);
+        //wpL = uL+cfL;
+        number wmL = uL-cfL;
+        number BxR2 = BxR*BxR;
+        number BtR2 = ByR*ByR + BzR*BzR;
+        number BBR = BxR2 + BtR2;
+        number ptR = pR + 0.5*BBR;
+        number uR2 = uR*uR;
+        number uuR = uR2 + vR*vR + wR*wR;
+        number aR2 = gam*pR/rR;
+        number caR2 = BxR2/rR;
+        number alfR = aR2+BBR/rR;
+        number alsR = SAFESQRT(alfR*alfR-4.0*aR2*caR2);
+        number cfR2 = 0.5*(alfR+alsR);
+        number cfR = sqrt(cfR2);
+        number wpR = uR+cfR;
+        //wmR = uR-cfR;
+
+        number[8] dU;
+        dU[0] = rR - rL;
+        dU[1] = rR*uR - rL*uL;
+        dU[2] = rR*vR - rL*vL;
+        dU[3] = rR*wR - rL*wL;
+        dU[4] = BxR - BxL;
+        dU[5] = ByR - ByL;
+        dU[6] = BzR - BzL;
+        dU[7] = (pR - pL)/(gam-1.0) + 0.5*(rR*uuR+BBR) - 0.5*(rL*uuL+BBL);
+        //
+        number bl = fmin(wmL, wm);
+        number br = fmax(wpR, wp);
+        number blm = fmin(bl, 0.0);
+        number brp = fmax(br, 0.0);
+        number fmassL = rL*uL;
+        number fmassR = rR*uR;
+        number fmomxL = rL*uL2 - BxL2 + ptL;
+        number fmomxR = rR*uR2 - BxR2 + ptR;
+        number fmomyL = rL*uL*vL - BxL*ByL;
+        number fmomyR = rR*uR*vR - BxR*ByR;
+        number fmomzL = rL*uL*wL - BxL*BzL;
+        number fmomzR = rR*uR*wR - BxR*BzR;
+        number fBxL = 0.0;
+        number fBxR = 0.0;
+        number fByL = uL*ByL - vL*BxL;
+        number fByR = uR*ByR - vR*BxR;
+        number fBzL = uL*BzL - wL*BxL;
+        number fBzR = uR*BzR - wR*BxR;
+        number fenergyL = (pL/(gam-1.0)+0.5*(rL*uuL+BBL)+ptL)*uL - (uL*BxL+vL*ByL+wL*BzL)*BxL;
+        number fenergyR = (pR/(gam-1.0)+0.5*(rR*uuR+BBR)+ptR)*uR - (uR*BxR+vR*ByR+wR*BzR)*BxR;
+        number iden = 1.0/(brp - blm);
+        number fac1 = brp*blm;
+        //
+        ConservedQuantities F = IFace.F;
+        auto cqi = myConfig.cqi;
+        number mass_flux = factor*(brp*fmassL - blm*fmassR + fac1*dU[0])*iden;
+        F[cqi.mass] += mass_flux;
+        F[cqi.xMom] += factor*((brp*fmomxL - blm*fmomxR + fac1*dU[1])*iden);
+        F[cqi.yMom] += factor*((brp*fmomyL - blm*fmomyR + fac1*dU[2])*iden);
+        if (cqi.threeD) { F[cqi.zMom] += factor*((brp*fmomzL - blm*fmomzR + fac1*dU[3])*iden); }
+        F[cqi.totEnergy] += factor*(brp*fenergyL - blm*fenergyR + fac1*dU[7])*iden;
+        if (cqi.MHD) {
+            F[cqi.xB] += factor*((brp*fBxL - blm*fBxR + fac1*dU[4])*iden);
+            F[cqi.yB] += factor*((brp*fByL - blm*fByR + fac1*dU[5])*iden);
+            F[cqi.zB] += factor*((brp*fBzL - blm*fBzR + fac1*dU[6])*iden);
+        }
+        version(multi_species_gas) {
+            if (cqi.n_species > 1) {
+                foreach (i; 0 .. cqi.n_species) {
+                    F[cqi.species+i] += mass_flux * ((mass_flux >= 0.0) ? Lft.gas.massf[i]: Rght.gas.massf[i]);
+                }
+            }
+        }
+        version(multi_T_gas) {
+            foreach (i; 0 .. cqi.n_modes) {
+                F[cqi.modes+i] += mass_flux * ((mass_flux >= 0.0) ? Lft.gas.u_modes[i]: Rght.gas.u_modes[i]);
+            }
+        }
+    } else {
+        assert(0, "HLLE not implemented for normal gas dynamics");
+    }
+} // end hlle3()
+
 
 @nogc
 void roe(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref LocalConfig myConfig, number factor=1.0)
