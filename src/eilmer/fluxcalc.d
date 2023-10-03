@@ -1952,9 +1952,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vL = Lft.vel.y;
     number wL = Lft.vel.z;
     version(MHD) {
-        number BxL = Lft.B.x /(4*std.math.PI*1.0e-7);
-        number ByL = Lft.B.y /(4*std.math.PI*1.0e-7);
-        number BzL = Lft.B.z /(4*std.math.PI*1.0e-7);
+        number BxL = Lft.B.x;
+        number ByL = Lft.B.y;
+        number BzL = Lft.B.z;
     }
     number rR = Rght.gas.rho;
     number pR = Rght.gas.p;
@@ -1962,9 +1962,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vR = Rght.vel.y;
     number wR = Rght.vel.z;
     version(MHD) {
-        number BxR = Rght.B.x /(4*std.math.PI*1.0e-7);
-        number ByR = Rght.B.y /(4*std.math.PI*1.0e-7);
-        number BzR = Rght.B.z /(4*std.math.PI*1.0e-7);
+        number BxR = Rght.B.x;
+        number ByR = Rght.B.y;
+        number BzR = Rght.B.z;
     }
     //
     // Derive the gas "constants" from the local conditions.
