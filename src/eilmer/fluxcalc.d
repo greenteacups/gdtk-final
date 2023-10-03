@@ -21,6 +21,7 @@ import gasflow: osher_riemann;
 import conservedquantities;
 import fvinterface;
 import globalconfig;
+import globaldata : SimState;
 
 /** Compute the inviscid fluxes (in 1D) across the cell interfaces.
  *
