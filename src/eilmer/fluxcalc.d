@@ -1987,9 +1987,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     //v   = 0.5*(vL+vR);
     //w   = 0.5*(wL+wR);
     version(MHD) {
-        number Bx  = 0.5*(BxL+BxR) /(4*std.math.PI*1.0e-7);
-        number By  = 0.5*(ByL+ByR) /(4*std.math.PI*1.0e-7);
-        number Bz  = 0.5*(BzL+BzR) /(4*std.math.PI*1.0e-7);
+        number Bx  = 0.5*(BxL+BxR);
+        number By  = 0.5*(ByL+ByR);
+        number Bz  = 0.5*(BzL+BzR);
     }
     if(SimState.time < 5.0e-4) {Bx = 0.0; By = 0.0; BxL = 0.0; ByL = 0.0; BxR = 0.0; ByR = 0.0;}
     //
