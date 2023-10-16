@@ -910,14 +910,14 @@ public:
         number u0 = sqrt(fs.vel.x^^2 + fs.vel.y^^2);
        
         number L = 0.4;                      // Characterisitc length scale
-        //number sigma = 4000;
+        sigma = 4000;
 
         number eta = 1/(mu0*sigma);     // Diffusivity
 
         //number U0 = B0/sqrt(mu0*rho0);  // Alfven speed
         //number S = mu0*U0*L/eta;       // Lundquist number (Magnetic Reynolds Number)
        
-        number S = mu0*sigma*u0*L;
+        number S = 1; //mu0*sigma*u0*L;
         //if (S < 0.01) {S = 0.01;}
 
         number dBxdx = grad.B[0][0] ;
