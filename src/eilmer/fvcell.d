@@ -843,12 +843,15 @@ public:
             // Conserved quantities are stored per-unit-volume.
             my_dUdt[j] = vol_inv * surface_integral + Q[j];
         }
+
         // Temporary boundary conditions used for my test box:
         //if(pos[0].y < 0.02) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
         //if(pos[0].y > 0.98 || pos[0].x < -0.48 || pos[0].x > 0.48) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
-	// Temporary boundary condition for blunt-body test:
-	if(sqrt(pos[0].x^^2 + pos[0].y^^2) < 0.203) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
-    if(pos[0].x > -0.0018) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
+
+        // Temporary boundary condition for blunt-body test:
+        if(sqrt(pos[0].x^^2 + pos[0].y^^2) < 0.2004) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
+        if(pos[0].x > 0 && pos[0].y < 0.201 && pos[0].y > -0.201) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
+        //if(pos[0].x > -0.0018) {my_dUdt[cqi.xB] = 0.0; my_dUdt[cqi.yB] = 0.0;}
 
         if (cqi.MHD && myConfig.MHD_static_field) {
             // We do not want the internal update to happen for the magnetic field.
