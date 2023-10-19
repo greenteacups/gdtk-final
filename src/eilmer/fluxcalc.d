@@ -1942,6 +1942,13 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
 //      Magnetohydrodynamic Flows" by D. Balsara
 
 {
+    number scale = 0.0; //0.0;
+    number test = 89.2*1.0; //892;
+    number tstar = 5.0e-4;
+    number tfin = 6.0e-4;
+    if(SimState.time > tstar) {scale = (SimState.time-tstar)/(tfin-tstar);}
+    if(SimState.time > tfin) {scale = 1.0;}
+
     auto gmodel = myConfig.gmodel;
     @nogc number SAFESQRT(number x) { return (fabs(x)>1.0e-14) ? sqrt(x) : to!number(0.0); }
     // Unpack the flow-state vectors for either side of the interface.
@@ -1952,9 +1959,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vL = Lft.vel.y;
     number wL = Lft.vel.z;
     version(MHD) {
-        number BxL = Lft.B.x;
-        number ByL = Lft.B.y;
-        number BzL = Lft.B.z;
+        number BxL = Lft.B.x *test*scale;
+        number ByL = Lft.B.y *test*scale;
+        number BzL = Lft.B.z *test*scale;
     }
     number rR = Rght.gas.rho;
     number pR = Rght.gas.p;
@@ -1962,9 +1969,9 @@ void hlle3(in FlowState Lft, in FlowState Rght, ref FVInterface IFace, ref Local
     number vR = Rght.vel.y;
     number wR = Rght.vel.z;
     version(MHD) {
-        number BxR = Rght.B.x;
-        number ByR = Rght.B.y;
-        number BzR = Rght.B.z;
+        number BxR = Rght.B.x *test*scale;
+        number ByR = Rght.B.y *test*scale;
+        number BzR = Rght.B.z *test*scale;
     }
     //
     // Derive the gas "constants" from the local conditions.
